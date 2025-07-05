@@ -43,7 +43,10 @@ The five studied conditions are: `wake`, `sleep`, `swsleep`, `xenon`, and `propo
 ## Data
 
 The EEG data are from Massimini et al. (2005, 2010) and are not publicly available.  
-They can be requested directly from the author.
+However, for the sole purpose of evaluation, they can be downloaded via the following link:  
+https://consigna.us.es/abcd1234 (password: TFMsayansEEG)
+
+These data are shared exclusively for reviewing this Master’s Thesis and must not be redistributed.
 
 ## Code
 
