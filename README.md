@@ -2,7 +2,7 @@
 
 This repository contains the code and materials for the Master's Thesis:
 **"Indicators of consciousness based on Differential Equation Systems"**,  
-authored by **J. Ángel Sayáns-Crespo** (2025), within the Master in Omics Data Analysis and Systems Biology (MADOBIS), University of Seville and UNIA.
+authored by **J. Ángel Sayáns-Crespo** (2025) and guided by **Fernando Soler Toscano** and **Jose Antonio Langa Rosado**, within the Master in Omics Data Analysis and Systems Biology (MADOBIS), University of Seville and UNIA.
 
 ## Overview
 
@@ -40,8 +40,6 @@ The five studied conditions are: `wake`, `sleep`, `swsleep`, `xenon`, and `propo
 - xgboost
 - cesium
 
-> 📌 Make sure to install all required packages before running the scripts.
-
 ## Data
 
 The EEG data are from Massimini et al. (2005, 2010) and are not publicly available.  
@@ -50,7 +48,7 @@ They can be requested directly from the author.
 ## Code
 
 - All code is organized and commented for clarity.  
-- R was used for IS/IG modeling and statistical analysis.  
+- R was used for IS/IG modeling and statistical analysis. The original autor is Fernando Soler Toscano and is available at: https://github.com/fersoler/InformationStructures  
 - Python was used for feature extraction and supervised classification.  
 - Scripts are provided as `.R`, `.ipynb`, or `.py` files with example usage.
 
@@ -62,6 +60,6 @@ If you use this material, please cite:
 
 ## Contact
 
-For data access or questions, contact: **[añade tu email aquí]**
+For data access or questions, contact: **jossaycre@alum.us.es**
 
 
