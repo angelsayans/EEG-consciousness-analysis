@@ -1,0 +1,5612 @@
+---
+title: "Analysis_intergrupo_IS"
+author: "J. Ángel Sayáns Crespo"
+date: '2025-06-14'
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+In this document we will perform the stadistical analysis
+
+Library:
+
+```{r}
+library(ggplot2)
+library(ggpubr)
+library(car)
+library(dunn.test)
+```
+
+# Load non autonomous data k=3:
+
+```{r}
+df_nonauto_k3 = read.csv2("C:/Users/angel/Desktop/Universidade/MADOBIS/TFM/semana_2/IsWakeSleepAnesthesia/IsWakeSleepAnesthesia/analysis/IS_SleepAnsthesia_Res1_Crit_Non_Auto_3.csv", sep = ",")
+df_nonauto_k3$critic = as.numeric(df_nonauto_k3$critic)
+df_nonauto_k3$igevenn = as.numeric(df_nonauto_k3$igevenn)
+df_nonauto_k3$igspBett = as.numeric(df_nonauto_k3$igspBett)
+# Check result
+head(df_nonauto_k3)
+```
+
+## Criticality:
+
+### Normality.
+
+To this end, we performed a Kolmogorov-Smirnov test, due to the amount of data.
+
+```{r}
+conditions = unique(df_nonauto_k3$state)
+
+for (cond in conditions) {
+ cat("\n--- condition:", cond, "---\n")
+  subset_vals <- df_nonauto_k3$critic[df_nonauto_k3$state == cond]
+  ks_res <-  ks.test(subset_vals, "pnorm", mean(subset_vals), sd(subset_vals))
+  print(ks_res)
+}
+```
+
+No normality
+
+Visualization
+
+```{r}
+# Histogram
+ggplot(df_nonauto_k3, aes(x = critic)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_nonauto_k3, aes(sample = critic)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot por condition", x = "Theorical", y = "Samples")
+
+```
+
+No normality
+
+### Homocedasticity:
+
+```{r}
+leveneTest(critic ~ state, data = df_nonauto_k3)
+```
+
+The p-value is well below 0.001, allowing us to conclude that there are significant differences in the variances across the different conditions.
+
+### Analysis
+
+Since the distributions are not normal and the variances differ, we must use a non-parametric test. Given that we are comparing more than two independent groups and the sample size is small, we will apply the Kruskal–Wallis test to compare the different conditions. If there were only two groups, we would use the Mann–Whitney U test for independent samples, or the Wilcoxon signed-rank test if the data were paired.
+
+```{r}
+kruskal.test(critic ~ state, data = df_nonauto_k3)
+```
+
+The p-value is well below 0.001, indicating that at least two conditions show significant differences in their distributions. To identify which specific pairs differ significantly, we will perform a Dunn’s test.
+
+```{r}
+dunn_res = dunn.test(df_nonauto_k3$critic, df_nonauto_k3$state, method = "BH", kw = TRUE)
+```
+
+### Visualization:
+
+```{r}
+# Plot
+p <- ggplot(df_nonauto_k3, aes(x = state, y = critic, fill = state)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Criticality J k = 3 non autonomous",
+       x = "Condition", y = "value")
+
+# P-values
+comparisons <- strsplit(dunn_res$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_res$P.adjusted
+)
+
+# Only significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+
+df_nonauto_k3$state <- factor(df_nonauto_k3$state, levels = unique(df_nonauto_k3$state))
+levels <- levels(df_nonauto_k3$state)
+
+# Names to position numbers
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Positions to labels
+df_sig$y.position <- seq(max(df_nonauto_k3$critic, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  # 
+)
+
+```
+
+## Eveness:
+
+### Normality
+
+```{r}
+conditions = unique(df_nonauto_k3$state)
+
+for (cond in conditions) {
+ cat("\n--- condition:", cond, "---\n")
+  subset_vals <- df_nonauto_k3$igevenn[df_nonauto_k3$state == cond]
+  ks_res <-  ks.test(subset_vals, "pnorm", mean(subset_vals), sd(subset_vals))
+  print(ks_res)
+}
+```
+
+No normality
+
+Visualization
+
+```{r}
+# Histogram
+ggplot(df_nonauto_k3, aes(x = igevenn)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_nonauto_k3, aes(sample = igevenn)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot por condition", x = "Theorical", y = "Samples")
+
+```
+
+No normality
+
+### Homocedasticity:
+
+```{r}
+leveneTest(igevenn ~ state, data = df_nonauto_k3)
+```
+
+The p-value is well below 0.001, allowing us to conclude that there are significant differences in the variances across the different conditions.
+
+### Analysis
+
+```{r}
+kruskal.test(igevenn ~ state, data = df_nonauto_k3)
+```
+
+The p-value is well below 0.001, indicating that at least two conditions show significant differences in their distributions. To identify which specific pairs differ significantly, we will perform a Dunn’s test.
+
+```{r}
+dunn_res = dunn.test(df_nonauto_k3$igevenn, df_nonauto_k3$state, method = "BH", kw = FALSE)
+```
+
+### Visualization:
+
+```{r}
+# Plot
+p <- ggplot(df_nonauto_k3, aes(x = state, y = igevenn, fill = state)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Evenness J k = 3 non autonomous",
+       x = "condition", y = "value")
+
+# P-values
+comparisons <- strsplit(dunn_res$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_res$P.adjusted
+)
+
+# Only significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+
+df_nonauto_k3$state <- factor(df_nonauto_k3$state, levels = unique(df_nonauto_k3$state))
+levels <- levels(df_nonauto_k3$state)
+
+# Names to position numbers
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Positions to labels
+df_sig$y.position <- seq(max(df_nonauto_k3$igevenn, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  # 
+)
+
+```
+
+## Betweenness:
+
+### Normality.
+
+```{r}
+conditions = unique(df_nonauto_k3$state)
+
+for (cond in conditions) {
+ cat("\n--- condition:", cond, "---\n")
+  subset_vals <- df_nonauto_k3$igspBett[df_nonauto_k3$state == cond]
+  ks_res <-  ks.test(subset_vals, "pnorm", mean(subset_vals), sd(subset_vals))
+  print(ks_res)
+}
+```
+
+No normality
+
+Visualization
+
+```{r}
+# Histogram
+ggplot(df_nonauto_k3, aes(x = igspBett)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_nonauto_k3, aes(sample = igspBett)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot por condition", x = "Theorical", y = "Samples")
+
+```
+
+No normality
+
+### Homocedasticity:
+
+```{r}
+leveneTest(igspBett ~ state, data = df_nonauto_k3)
+```
+
+The p-value is well below 0.001, allowing us to conclude that there are significant differences in the variances across the different conditions.
+
+### Analysis:
+
+```{r}
+kruskal.test(igspBett ~ state, data = df_nonauto_k3)
+```
+
+The p-value is well below 0.001, indicating that at least two conditions show significant differences in their distributions. To identify which specific pairs differ significantly, we will perform a Dunn’s test.
+
+```{r}
+dunn_res = dunn.test(df_nonauto_k3$igspBett, df_nonauto_k3$state, method = "BH", kw = TRUE)
+```
+
+### Visualization:
+
+```{r}
+# Plot
+p <- ggplot(df_nonauto_k3, aes(x = state, y = igspBett, fill = state)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Mean betweenness J k = 3 non autonomous",
+       x = "condition", y = "value")
+
+# P-values
+comparisons <- strsplit(dunn_res$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_res$P.adjusted
+)
+
+# Only significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+
+df_nonauto_k3$state <- factor(df_nonauto_k3$state, levels = unique(df_nonauto_k3$state))
+levels <- levels(df_nonauto_k3$state)
+
+# Names to position numbers
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Positions to labels
+df_sig$y.position <- seq(max(df_nonauto_k3$igspBett, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  # 
+)
+
+```
+
+# Load non autonomous data k = 5
+```{r}
+df_nonauto_k5 = read.csv2("C:/Users/angel/Desktop/Universidade/MADOBIS/TFM/semana_2/IsWakeSleepAnesthesia/IsWakeSleepAnesthesia/analysis/IS_SleepAnsthesia_Res1_Crit_Non_Auto_5.csv", sep = ",")
+df_nonauto_k5$critic = as.numeric(df_nonauto_k5$critic)
+df_nonauto_k5$igevenn = as.numeric(df_nonauto_k5$igevenn)
+df_nonauto_k5$igspBett = as.numeric(df_nonauto_k5$igspBett)
+# Check result
+head(df_nonauto_k5)
+```
+
+## Criticality:
+
+### Normality.
+
+```{r}
+conditions = unique(df_nonauto_k5$state)
+
+for (cond in conditions) {
+ cat("\n--- condition:", cond, "---\n")
+  subset_vals <- df_nonauto_k5$critic[df_nonauto_k5$state == cond]
+  ks_res <-  ks.test(subset_vals, "pnorm", mean(subset_vals), sd(subset_vals))
+  print(ks_res)
+}
+```
+
+No normality
+
+Visualization
+
+```{r}
+# Histogram
+ggplot(df_nonauto_k5, aes(x = critic)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_nonauto_k5, aes(sample = critic)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot por condition", x = "Theorical", y = "Samples")
+
+```
+
+No normality
+
+### Homocedasticity:
+
+```{r}
+leveneTest(critic ~ state, data = df_nonauto_k5)
+```
+
+The p-value is well below 0.001, allowing us to conclude that there are significant differences in the variances across the different conditions.
+
+### Analysis
+
+```{r}
+kruskal.test(critic ~ state, data = df_nonauto_k5)
+```
+
+The p-value is well below 0.001, indicating that at least two conditions show significant differences in their distributions. To identify which specific pairs differ significantly, we will perform a Dunn’s test.
+
+```{r}
+dunn_res = dunn.test(df_nonauto_k5$critic, df_nonauto_k5$state, method = "BH", kw = TRUE)
+```
+
+### Visualization:
+
+```{r}
+# Plot
+p <- ggplot(df_nonauto_k5, aes(x = state, y = critic, fill = state)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Criticality J k = 5 non autonomous",
+       x = "condition", y = "value")
+
+# P-values
+comparisons <- strsplit(dunn_res$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_res$P.adjusted
+)
+
+# Only significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+
+df_nonauto_k5$state <- factor(df_nonauto_k5$state, levels = unique(df_nonauto_k5$state))
+levels <- levels(df_nonauto_k5$state)
+
+# Names to position numbers
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Positions to labels
+df_sig$y.position <- seq(max(df_nonauto_k5$critic, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  # 
+)
+
+```
+
+## Eveness:
+
+### Normality.
+
+```{r}
+conditions = unique(df_nonauto_k5$state)
+
+for (cond in conditions) {
+ cat("\n--- condition:", cond, "---\n")
+  subset_vals <- df_nonauto_k5$igevenn[df_nonauto_k5$state == cond]
+  ks_res <-  ks.test(subset_vals, "pnorm", mean(subset_vals), sd(subset_vals))
+  print(ks_res)
+}
+```
+
+No normality
+
+Visualization
+
+```{r}
+# Histogram
+ggplot(df_nonauto_k5, aes(x = igevenn)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_nonauto_k5, aes(sample = igevenn)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot por condition", x = "Theorical", y = "Samples")
+
+```
+
+No normality
+
+### Homocedasticity:
+
+```{r}
+leveneTest(igevenn ~ state, data = df_nonauto_k5)
+```
+
+The p-value is well below 0.001, allowing us to conclude that there are significant differences in the variances across the different conditions.
+
+### Analysis
+
+```{r}
+kruskal.test(igevenn ~ state, data = df_nonauto_k5)
+```
+
+The p-value is well below 0.001, indicating that at least two conditions show significant differences in their distributions. To identify which specific pairs differ significantly, we will perform a Dunn’s test.
+
+```{r}
+dunn_res = dunn.test(df_nonauto_k5$igevenn, df_nonauto_k5$state, method = "BH", kw = FALSE)
+```
+
+### Visualization:
+
+```{r}
+# Plot
+p <- ggplot(df_nonauto_k5, aes(x = state, y = igevenn, fill = state)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Evenness J k = 5 non autonomous",
+       x = "condition", y = "value")
+
+# P-values
+comparisons <- strsplit(dunn_res$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_res$P.adjusted
+)
+
+# Only significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+
+df_nonauto_k5$state <- factor(df_nonauto_k5$state, levels = unique(df_nonauto_k5$state))
+levels <- levels(df_nonauto_k5$state)
+
+# Names to position numbers
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Positions to labels
+df_sig$y.position <- seq(max(df_nonauto_k5$igevenn, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  # 
+)
+
+```
+
+## Betweenness:
+
+### Normality.
+
+```{r}
+conditions = unique(df_nonauto_k5$state)
+
+for (cond in conditions) {
+ cat("\n--- condition:", cond, "---\n")
+  subset_vals <- df_nonauto_k5$igspBett[df_nonauto_k5$state == cond]
+  ks_res <-  ks.test(subset_vals, "pnorm", mean(subset_vals), sd(subset_vals))
+  print(ks_res)
+}
+```
+
+No normality
+
+Visualization
+
+```{r}
+# Histogram
+ggplot(df_nonauto_k5, aes(x = igspBett)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_nonauto_k5, aes(sample = igspBett)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot por condition", x = "Theorical", y = "Samples")
+
+```
+
+No normality
+
+### Homocedasticity:
+
+```{r}
+leveneTest(igspBett ~ state, data = df_nonauto_k5)
+```
+
+The p-value is well below 0.001, allowing us to conclude that there are significant differences in the variances across the different conditions.
+
+### Analysis
+
+```{r}
+kruskal.test(igspBett ~ state, data = df_nonauto_k5)
+```
+
+The p-value is well below 0.001, indicating that at least two conditions show significant differences in their distributions. To identify which specific pairs differ significantly, we will perform a Dunn’s test.
+
+```{r}
+dunn_res = dunn.test(df_nonauto_k5$igspBett, df_nonauto_k5$state, method = "BH", kw = TRUE)
+```
+
+### Visualization:
+
+```{r}
+# Plot
+p <- ggplot(df_nonauto_k5, aes(x = state, y = igspBett, fill = state)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Mean betweenness J k = 5 non autonomous",
+       x = "condition", y = "value")
+
+# P-values
+comparisons <- strsplit(dunn_res$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_res$P.adjusted
+)
+
+# Only significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+
+df_nonauto_k5$state <- factor(df_nonauto_k5$state, levels = unique(df_nonauto_k5$state))
+levels <- levels(df_nonauto_k5$state)
+
+# Names to position numbers
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Positions to labels
+df_sig$y.position <- seq(max(df_nonauto_k5$igspBett, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  # 
+)
+
+```
+
+# Load non autonomous data k = 7
+```{r}
+df_nonauto_k7 = read.csv2("C:/Users/angel/Desktop/Universidade/MADOBIS/TFM/semana_2/IsWakeSleepAnesthesia/IsWakeSleepAnesthesia/analysis/IS_SleepAnsthesia_Res1_Crit_Non_Auto_7.csv", sep = ",")
+df_nonauto_k7$critic = as.numeric(df_nonauto_k7$critic)
+df_nonauto_k7$igevenn = as.numeric(df_nonauto_k7$igevenn)
+df_nonauto_k7$igspBett = as.numeric(df_nonauto_k7$igspBett)
+# Check result
+head(df_nonauto_k7)
+```
+
+## Criticality:
+
+### Normality.
+
+```{r}
+conditions = unique(df_nonauto_k7$state)
+
+for (cond in conditions) {
+ cat("\n--- condition:", cond, "---\n")
+  subset_vals <- df_nonauto_k7$critic[df_nonauto_k7$state == cond]
+  ks_res <-  ks.test(subset_vals, "pnorm", mean(subset_vals), sd(subset_vals))
+  print(ks_res)
+}
+```
+
+No normality
+
+Visualization
+
+```{r}
+# Histogram
+ggplot(df_nonauto_k7, aes(x = critic)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_nonauto_k7, aes(sample = critic)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot por condition", x = "Theorical", y = "Samples")
+
+```
+
+No normality
+
+### Homocedasticity:
+
+```{r}
+leveneTest(critic ~ state, data = df_nonauto_k7)
+```
+
+The p-value is well below 0.001, allowing us to conclude that there are significant differences in the variances across the different conditions.
+
+### Analysis
+
+
+```{r}
+kruskal.test(critic ~ state, data = df_nonauto_k7)
+```
+
+The p-value is well below 0.001, indicating that at least two conditions show significant differences in their distributions. To identify which specific pairs differ significantly, we will perform a Dunn’s test.
+
+```{r}
+dunn_res = dunn.test(df_nonauto_k7$critic, df_nonauto_k7$state, method = "BH", kw = TRUE)
+```
+
+### Visualization:
+
+```{r}
+# Plot
+p <- ggplot(df_nonauto_k7, aes(x = state, y = critic, fill = state)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Criticality J k = 7 non autonomous",
+       x = "condition", y = "value")
+
+# P-values
+comparisons <- strsplit(dunn_res$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_res$P.adjusted
+)
+
+# Only significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+
+df_nonauto_k7$state <- factor(df_nonauto_k7$state, levels = unique(df_nonauto_k7$state))
+levels <- levels(df_nonauto_k7$state)
+
+# Names to position numbers
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Positions to labels
+df_sig$y.position <- seq(max(df_nonauto_k7$critic, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  # 
+)
+
+```
+
+## Eveness:
+
+### Normality.
+
+```{r}
+conditions = unique(df_nonauto_k7$state)
+
+for (cond in conditions) {
+ cat("\n--- condition:", cond, "---\n")
+  subset_vals <- df_nonauto_k7$igevenn[df_nonauto_k7$state == cond]
+  ks_res <-  ks.test(subset_vals, "pnorm", mean(subset_vals), sd(subset_vals))
+  print(ks_res)
+}
+```
+
+No normality
+
+Visualization
+
+```{r}
+# Histogram
+ggplot(df_nonauto_k7, aes(x = igevenn)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_nonauto_k7, aes(sample = igevenn)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot por condition", x = "Theorical", y = "Samples")
+
+```
+
+No normality
+
+### Homocedasticity:
+
+```{r}
+leveneTest(igevenn ~ state, data = df_nonauto_k7)
+```
+
+The p-value is well below 0.001, allowing us to conclude that there are significant differences in the variances across the different conditions.
+
+### Analysis
+
+```{r}
+kruskal.test(igevenn ~ state, data = df_nonauto_k7)
+```
+
+The p-value is well below 0.001, indicating that at least two conditions show significant differences in their distributions. To identify which specific pairs differ significantly, we will perform a Dunn’s test.
+
+```{r}
+dunn_res = dunn.test(df_nonauto_k7$igevenn, df_nonauto_k7$state, method = "BH", kw = FALSE)
+```
+
+### Visualization:
+
+```{r}
+# Plot
+p <- ggplot(df_nonauto_k7, aes(x = state, y = igevenn, fill = state)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Evenness J k = 7 non autonomous",
+       x = "condition", y = "value")
+
+# P-values
+comparisons <- strsplit(dunn_res$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_res$P.adjusted
+)
+
+# Only significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+
+df_nonauto_k7$state <- factor(df_nonauto_k7$state, levels = unique(df_nonauto_k7$state))
+levels <- levels(df_nonauto_k7$state)
+
+# Names to position numbers
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Positions to labels
+df_sig$y.position <- seq(max(df_nonauto_k7$igevenn, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  # 
+)
+
+```
+
+## Betweenness:
+
+### Normality.
+
+```{r}
+conditions = unique(df_nonauto_k7$state)
+
+for (cond in conditions) {
+ cat("\n--- condition:", cond, "---\n")
+  subset_vals <- df_nonauto_k7$igspBett[df_nonauto_k7$state == cond]
+  ks_res <-  ks.test(subset_vals, "pnorm", mean(subset_vals), sd(subset_vals))
+  print(ks_res)
+}
+```
+
+No normality
+
+Visualization
+
+```{r}
+# Histogram
+ggplot(df_nonauto_k7, aes(x = igspBett)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_nonauto_k7, aes(sample = igspBett)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot por condition", x = "Theorical", y = "Samples")
+
+```
+
+No normality
+
+### Homocedasticity:
+
+```{r}
+leveneTest(igspBett ~ state, data = df_nonauto_k7)
+```
+
+The p-value is well below 0.001, allowing us to conclude that there are significant differences in the variances across the different conditions.
+
+### Analysis
+
+```{r}
+kruskal.test(igspBett ~ state, data = df_nonauto_k7)
+```
+
+The p-value is well below 0.001, indicating that at least two conditions show significant differences in their distributions. To identify which specific pairs differ significantly, we will perform a Dunn’s test.
+
+```{r}
+dunn_res = dunn.test(df_nonauto_k7$igspBett, df_nonauto_k7$state, method = "BH", kw = TRUE)
+```
+
+### Visualization:
+
+```{r}
+# Plot
+p <- ggplot(df_nonauto_k7, aes(x = state, y = igspBett, fill = state)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Mean betweenness J k = 7 non autonomous",
+       x = "condition", y = "value")
+
+# P-values
+comparisons <- strsplit(dunn_res$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_res$P.adjusted
+)
+
+# Only significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+
+df_nonauto_k7$state <- factor(df_nonauto_k7$state, levels = unique(df_nonauto_k7$state))
+levels <- levels(df_nonauto_k7$state)
+
+# Names to position numbers
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Positions to labels
+df_sig$y.position <- seq(max(df_nonauto_k7$igspBett, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  # 
+)
+
+```
+
+# Load autonomous data k=3:
+
+```{r}
+df_auto_k3 = read.csv2("C:/Users/angel/Desktop/Universidade/MADOBIS/TFM/semana_2/IsWakeSleepAnesthesia/IsWakeSleepAnesthesia/analysis/IS_SleepAnsthesia_Res1_Crit_Auto_3.csv", sep = ",")
+df_auto_k3$critic = as.numeric(df_auto_k3$critic)
+df_auto_k3$igevenn = as.numeric(df_auto_k3$igevenn)
+df_auto_k3$igspBett = as.numeric(df_auto_k3$igspBett)
+# Check result
+head(df_auto_k3)
+```
+
+## Criticality:
+
+### Normality.
+
+```{r}
+conditions = unique(df_auto_k3$state)
+
+for (cond in conditions) {
+ cat("\n--- condition:", cond, "---\n")
+  subset_vals <- df_auto_k3$critic[df_auto_k3$state == cond]
+  ks_res <-  ks.test(subset_vals, "pnorm", mean(subset_vals), sd(subset_vals))
+  print(ks_res)
+}
+```
+
+No normality
+
+Visualization
+
+```{r}
+# Histogram
+ggplot(df_auto_k3, aes(x = critic)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_auto_k3, aes(sample = critic)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot por condition", x = "Theorical", y = "Samples")
+
+```
+
+No normality
+
+### Homocedasticity:
+
+```{r}
+leveneTest(critic ~ state, data = df_auto_k3)
+```
+
+The p-value is well below 0.001, allowing us to conclude that there are significant differences in the variances across the different conditions.
+
+### Analysis
+
+```{r}
+kruskal.test(critic ~ state, data = df_auto_k3)
+```
+
+The p-value is well below 0.001, indicating that at least two conditions show significant differences in their distributions. To identify which specific pairs differ significantly, we will perform a Dunn’s test.
+
+```{r}
+dunn_res = dunn.test(df_auto_k3$critic, df_auto_k3$state, method = "BH", kw = TRUE)
+```
+
+### Visualization:
+
+```{r}
+# Plot
+p <- ggplot(df_auto_k3, aes(x = state, y = critic, fill = state)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Criticality J k = 3 autonomous",
+       x = "condition", y = "value")
+
+# P-values
+comparisons <- strsplit(dunn_res$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_res$P.adjusted
+)
+
+# Only significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+
+df_auto_k3$state <- factor(df_auto_k3$state, levels = unique(df_auto_k3$state))
+levels <- levels(df_auto_k3$state)
+
+# Names to position numbers
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Positions to labels
+df_sig$y.position <- seq(max(df_auto_k3$critic, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  # 
+)
+
+```
+
+## Eveness:
+
+### Normality
+
+```{r, eval = FALSE}
+conditions = unique(df_auto_k3$state)
+
+for (cond in conditions) {
+ cat("\n--- condition:", cond, "---\n")
+  subset_vals <- df_auto_k3$igevenn[df_auto_k3$state == cond]
+  ks_res <-  ks.test(subset_vals)
+  print(ks_res)
+}
+```
+
+No normality
+
+Visualization
+
+```{r}
+# Histogram
+ggplot(df_auto_k3, aes(x = igevenn)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_auto_k3, aes(sample = igevenn)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot por condition", x = "Theorical", y = "Samples")
+
+```
+
+No normality
+
+### Homocedasticity:
+
+```{r}
+leveneTest(igevenn ~ state, data = df_auto_k3)
+```
+
+The p-value is well below 0.001, allowing us to conclude that there are significant differences in the variances across the different conditions.
+
+### Analysis
+
+```{r}
+kruskal.test(igevenn ~ state, data = df_auto_k3)
+```
+
+The p-value is well below 0.001, indicating that at least two conditions show significant differences in their distributions. To identify which specific pairs differ significantly, we will perform a Dunn’s test.
+
+```{r}
+dunn_res = dunn.test(df_auto_k3$igevenn, df_auto_k3$state, method = "BH", kw = FALSE)
+```
+
+### Visualization:
+
+```{r, eval = FALSE}
+# Plot
+p <- ggplot(df_auto_k3, aes(x = state, y = igevenn, fill = state)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Evenness J k = 3 autonomous",
+       x = "condition", y = "value")
+
+# P-values
+comparisons <- strsplit(dunn_res$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_res$P.adjusted
+)
+
+# Only significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+
+df_auto_k3$state <- factor(df_auto_k3$state, levels = unique(df_auto_k3$state))
+levels <- levels(df_auto_k3$state)
+
+# Names to position numbers
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Positions to labels
+df_sig$y.position <- seq(max(df_auto_k3$igevenn, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  # 
+)
+
+```
+
+## Betweenness:
+
+### Normality.
+
+```{r}
+conditions = unique(df_auto_k3$state)
+
+for (cond in conditions) {
+ cat("\n--- condition:", cond, "---\n")
+  subset_vals <- df_auto_k3$igspBett[df_auto_k3$state == cond]
+  ks_res <-  ks.test(subset_vals, "pnorm", mean(subset_vals), sd(subset_vals))
+  print(ks_res)
+}
+```
+
+No normality
+
+Visualization
+
+```{r}
+# Histogram
+ggplot(df_auto_k3, aes(x = igspBett)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_auto_k3, aes(sample = igspBett)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot por condition", x = "Theorical", y = "Samples")
+
+```
+
+No normality
+
+### Homocedasticity:
+
+```{r}
+leveneTest(igspBett ~ state, data = df_auto_k3)
+```
+
+The p-value is well below 0.001, allowing us to conclude that there are significant differences in the variances across the different conditions.
+
+### Analysis:
+
+```{r}
+kruskal.test(igspBett ~ state, data = df_auto_k3)
+```
+
+The p-value is well below 0.001, indicating that at least two conditions show significant differences in their distributions. To identify which specific pairs differ significantly, we will perform a Dunn’s test.
+
+```{r}
+dunn_res = dunn.test(df_auto_k3$igspBett, df_auto_k3$state, method = "BH", kw = TRUE)
+```
+
+### Visualization:
+
+```{r}
+# Plot
+p <- ggplot(df_auto_k3, aes(x = state, y = igspBett, fill = state)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Mean betweenness J k = 3 autonomous",
+       x = "condition", y = "value")
+
+# P-values
+comparisons <- strsplit(dunn_res$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_res$P.adjusted
+)
+
+# Only significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+
+df_auto_k3$state <- factor(df_auto_k3$state, levels = unique(df_auto_k3$state))
+levels <- levels(df_auto_k3$state)
+
+# Names to position numbers
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Positions to labels
+df_sig$y.position <- seq(max(df_auto_k3$igspBett, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  # 
+)
+
+```
+
+# Load autonomous data k = 5
+```{r}
+df_auto_k5 = read.csv2("C:/Users/angel/Desktop/Universidade/MADOBIS/TFM/semana_2/IsWakeSleepAnesthesia/IsWakeSleepAnesthesia/analysis/IS_SleepAnsthesia_Res1_Crit_Auto_5.csv", sep = ",")
+df_auto_k5$critic = as.numeric(df_auto_k5$critic)
+df_auto_k5$igevenn = as.numeric(df_auto_k5$igevenn)
+df_auto_k5$igspBett = as.numeric(df_auto_k5$igspBett)
+# Check result
+head(df_auto_k5)
+```
+
+## Criticality:
+
+### Normality.
+
+```{r}
+conditions = unique(df_auto_k5$state)
+
+for (cond in conditions) {
+ cat("\n--- condition:", cond, "---\n")
+  subset_vals <- df_auto_k5$critic[df_auto_k5$state == cond]
+  ks_res <-  ks.test(subset_vals, "pnorm", mean(subset_vals), sd(subset_vals))
+  print(ks_res)
+}
+```
+
+No normality
+
+Visualization
+
+```{r}
+# Histogram
+ggplot(df_auto_k5, aes(x = critic)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_auto_k5, aes(sample = critic)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot por condition", x = "Theorical", y = "Samples")
+
+```
+
+No normality
+
+### Homocedasticity:
+
+```{r}
+leveneTest(critic ~ state, data = df_auto_k5)
+```
+
+The p-value is well below 0.001, allowing us to conclude that there are significant differences in the variances across the different conditions.
+
+### Analysis
+
+```{r}
+kruskal.test(critic ~ state, data = df_auto_k5)
+```
+
+The p-value is well below 0.001, indicating that at least two conditions show significant differences in their distributions. To identify which specific pairs differ significantly, we will perform a Dunn’s test.
+
+```{r}
+dunn_res = dunn.test(df_auto_k5$critic, df_auto_k5$state, method = "BH", kw = TRUE)
+```
+
+### Visualization:
+
+```{r}
+# Plot
+p <- ggplot(df_auto_k5, aes(x = state, y = critic, fill = state)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Criticality J k = 5 autonomous",
+       x = "condition", y = "value")
+
+# P-values
+comparisons <- strsplit(dunn_res$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_res$P.adjusted
+)
+
+# Only significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+
+df_auto_k5$state <- factor(df_auto_k5$state, levels = unique(df_auto_k5$state))
+levels <- levels(df_auto_k5$state)
+
+# Names to position numbers
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Positions to labels
+df_sig$y.position <- seq(max(df_auto_k5$critic, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  # 
+)
+
+```
+
+## Eveness:
+
+### Normality.
+
+```{r, eval = FALSE}
+conditions = unique(df_auto_k5$state)
+
+for (cond in conditions) {
+ cat("\n--- condition:", cond, "---\n")
+  subset_vals <- df_auto_k5$igevenn[df_auto_k5$state == cond]
+  ks_res <-  ks.test(subset_vals, "pnorm", mean(subset_vals), sd(subset_vals))
+  print(ks_res)
+}
+```
+
+No normality
+
+Visualization
+
+```{r, eval = FALSE}
+# Histogram
+ggplot(df_auto_k5, aes(x = igevenn)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_auto_k5, aes(sample = igevenn)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot por condition", x = "Theorical", y = "Samples")
+
+```
+
+No normality
+
+### Homocedasticity:
+
+```{r, eval = FALSE}
+leveneTest(igevenn ~ state, data = df_auto_k5)
+```
+
+The p-value is well below 0.001, allowing us to conclude that there are significant differences in the variances across the different conditions.
+
+### Analysis
+
+```{r, eval = FALSE}
+kruskal.test(igevenn ~ state, data = df_auto_k5)
+```
+
+The p-value is well below 0.001, indicating that at least two conditions show significant differences in their distributions. To identify which specific pairs differ significantly, we will perform a Dunn’s test.
+
+```{r}
+dunn_res = dunn.test(df_auto_k5$igevenn, df_auto_k5$state, method = "BH", kw = FALSE)
+```
+
+### Visualization:
+
+```{r, eval = FALSE}
+# Plot
+p <- ggplot(df_auto_k5, aes(x = state, y = igevenn, fill = state)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Evenness J k = 5 autonomous",
+       x = "condition", y = "value")
+
+# P-values
+comparisons <- strsplit(dunn_res$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_res$P.adjusted
+)
+
+# Only significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+
+df_auto_k5$state <- factor(df_auto_k5$state, levels = unique(df_auto_k5$state))
+levels <- levels(df_auto_k5$state)
+
+# Names to position numbers
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Positions to labels
+df_sig$y.position <- seq(max(df_auto_k5$igevenn, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  # 
+)
+
+```
+
+## Betweenness:
+
+### Normality.
+
+```{r}
+conditions = unique(df_auto_k5$state)
+
+for (cond in conditions) {
+ cat("\n--- condition:", cond, "---\n")
+  subset_vals <- df_auto_k5$igspBett[df_auto_k5$state == cond]
+  ks_res <-  ks.test(subset_vals, "pnorm", mean(subset_vals), sd(subset_vals))
+  print(ks_res)
+}
+```
+
+No normality
+
+Visualization
+
+```{r, eval = FALSE}
+# Histogram
+ggplot(df_auto_k5, aes(x = igspBett)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_auto_k5, aes(sample = igspBett)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot por condition", x = "Theorical", y = "Samples")
+
+```
+
+No normality
+
+### Homocedasticity:
+
+```{r, eval = FALSE}
+leveneTest(igspBett ~ state, data = df_auto_k5)
+```
+
+The p-value is well below 0.001, allowing us to conclude that there are significant differences in the variances across the different conditions.
+
+### Analysis
+
+```{r}
+kruskal.test(igspBett ~ state, data = df_auto_k5)
+```
+
+The p-value is well below 0.001, indicating that at least two conditions show significant differences in their distributions. To identify which specific pairs differ significantly, we will perform a Dunn’s test.
+
+```{r}
+dunn_res = dunn.test(df_auto_k5$igspBett, df_auto_k5$state, method = "BH", kw = TRUE)
+```
+
+### Visualization:
+
+```{r, eval = FALSE}
+# Plot
+p <- ggplot(df_auto_k5, aes(x = state, y = igspBett, fill = state)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Mean betweenness J k = 5 autonomous",
+       x = "condition", y = "value")
+
+# P-values
+comparisons <- strsplit(dunn_res$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_res$P.adjusted
+)
+
+# Only significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+
+df_auto_k5$state <- factor(df_auto_k5$state, levels = unique(df_auto_k5$state))
+levels <- levels(df_auto_k5$state)
+
+# Names to position numbers
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Positions to labels
+df_sig$y.position <- seq(max(df_auto_k5$igspBett, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  # 
+)
+
+```
+
+# Load autonomous data k = 7
+```{r}
+df_auto_k7 = read.csv2("C:/Users/angel/Desktop/Universidade/MADOBIS/TFM/semana_2/IsWakeSleepAnesthesia/IsWakeSleepAnesthesia/analysis/IS_SleepAnsthesia_Res1_Crit_Auto_7.csv", sep = ",")
+df_auto_k7$critic = as.numeric(df_auto_k7$critic)
+df_auto_k7$igevenn = as.numeric(df_auto_k7$igevenn)
+df_auto_k7$igspBett = as.numeric(df_auto_k7$igspBett)
+# Check result
+head(df_auto_k7)
+```
+
+## Criticality:
+
+### Normality.
+
+```{r}
+conditions = unique(df_auto_k7$state)
+
+for (cond in conditions) {
+ cat("\n--- condition:", cond, "---\n")
+  subset_vals <- df_auto_k7$critic[df_auto_k7$state == cond]
+  ks_res <-  ks.test(subset_vals, "pnorm", mean(subset_vals), sd(subset_vals))
+  print(ks_res)
+}
+```
+
+No normality
+
+Visualization
+
+```{r}
+# Histogram
+ggplot(df_auto_k7, aes(x = critic)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_auto_k7, aes(sample = critic)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot por condition", x = "Theorical", y = "Samples")
+
+```
+
+No normality
+
+### Homocedasticity:
+
+```{r}
+leveneTest(critic ~ state, data = df_auto_k7)
+```
+
+The p-value is well below 0.001, allowing us to conclude that there are significant differences in the variances across the different conditions.
+
+### Analysis
+
+```{r}
+kruskal.test(critic ~ state, data = df_auto_k7)
+```
+
+The p-value is well below 0.001, indicating that at least two conditions show significant differences in their distributions. To identify which specific pairs differ significantly, we will perform a Dunn’s test.
+
+```{r}
+dunn_res = dunn.test(df_auto_k7$critic, df_auto_k7$state, method = "BH", kw = TRUE)
+```
+
+### Visualization:
+
+```{r}
+# Plot
+p <- ggplot(df_auto_k7, aes(x = state, y = critic, fill = state)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Criticality J k = 7 autonomous",
+       x = "condition", y = "value")
+
+# P-values
+comparisons <- strsplit(dunn_res$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_res$P.adjusted
+)
+
+# Only significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+
+df_auto_k7$state <- factor(df_auto_k7$state, levels = unique(df_auto_k7$state))
+levels <- levels(df_auto_k7$state)
+
+# Names to position numbers
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Positions to labels
+df_sig$y.position <- seq(max(df_auto_k7$critic, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  # 
+)
+
+```
+
+## Eveness:
+
+### Normality.
+
+```{r, eval = FALSE}
+conditions = unique(df_auto_k7$state)
+
+for (cond in conditions) {
+ cat("\n--- condition:", cond, "---\n")
+  subset_vals <- df_auto_k7$igevenn[df_auto_k7$state == cond]
+  ks_res <-  ks.test(subset_vals, "pnorm", mean(subset_vals), sd(subset_vals))
+  print(ks_res)
+}
+```
+
+No normality
+
+Visualization
+
+```{r, eval = FALSE}
+# Histogram
+ggplot(df_auto_k7, aes(x = igevenn)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_auto_k7, aes(sample = igevenn)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot por condition", x = "Theorical", y = "Samples")
+
+```
+
+No normality
+
+### Homocedasticity:
+
+```{r}
+leveneTest(igevenn ~ state, data = df_auto_k7)
+```
+
+The p-value is well below 0.001, allowing us to conclude that there are significant differences in the variances across the different conditions.
+
+### Analysis
+
+```{r}
+kruskal.test(igevenn ~ state, data = df_auto_k7)
+```
+
+The p-value is well below 0.001, indicating that at least two conditions show significant differences in their distributions. To identify which specific pairs differ significantly, we will perform a Dunn’s test.
+
+```{r}
+dunn_res = dunn.test(df_auto_k7$igevenn, df_auto_k7$state, method = "BH", kw = FALSE)
+```
+
+### Visualization:
+
+```{r, eval = FALSE}
+# Plot
+p <- ggplot(df_auto_k7, aes(x = state, y = igevenn, fill = state)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Evenness J k = 7 autonomous",
+       x = "condition", y = "value")
+
+# P-values
+comparisons <- strsplit(dunn_res$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_res$P.adjusted
+)
+
+# Only significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+
+df_auto_k7$state <- factor(df_auto_k7$state, levels = unique(df_auto_k7$state))
+levels <- levels(df_auto_k7$state)
+
+# Names to position numbers
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Positions to labels
+df_sig$y.position <- seq(max(df_auto_k7$igevenn, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  # 
+)
+
+```
+
+## Betweenness:
+
+### Normality.
+
+```{r}
+conditions = unique(df_auto_k7$state)
+
+for (cond in conditions) {
+ cat("\n--- condition:", cond, "---\n")
+  subset_vals <- df_auto_k7$igspBett[df_auto_k7$state == cond]
+  ks_res <-  ks.test(subset_vals, "pnorm", mean(subset_vals), sd(subset_vals))
+  print(ks_res)
+}
+```
+
+No normality
+
+Visualization
+
+```{r}
+# Histogram
+ggplot(df_auto_k7, aes(x = igspBett)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_auto_k7, aes(sample = igspBett)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot por condition", x = "Theorical", y = "Samples")
+
+```
+
+No normality
+
+### Homocedasticity:
+
+```{r}
+leveneTest(igspBett ~ state, data = df_auto_k7)
+```
+
+The p-value is well below 0.001, allowing us to conclude that there are significant differences in the variances across the different conditions.
+
+### Analysis
+
+```{r}
+kruskal.test(igspBett ~ state, data = df_auto_k7)
+```
+
+The p-value is well below 0.001, indicating that at least two conditions show significant differences in their distributions. To identify which specific pairs differ significantly, we will perform a Dunn’s test.
+
+```{r}
+dunn_res = dunn.test(df_auto_k7$igspBett, df_auto_k7$state, method = "BH", kw = TRUE)
+```
+
+### Visualization:
+
+```{r, eval = FALSE}
+# Plot
+p <- ggplot(df_auto_k7, aes(x = state, y = igspBett, fill = state)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Mean betweenness J k = 7 autonomous",
+       x = "condition", y = "value")
+
+# P-values
+comparisons <- strsplit(dunn_res$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_res$P.adjusted
+)
+
+# Only significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+
+df_auto_k7$state <- factor(df_auto_k7$state, levels = unique(df_auto_k7$state))
+levels <- levels(df_auto_k7$state)
+
+# Names to position numbers
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Positions to labels
+df_sig$y.position <- seq(max(df_auto_k7$igspBett, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  # 
+)
+
+```
+
+# Load non autonomous data JSS k=3:
+
+```{r}
+df_nonauto_k3_JSS = read.csv2("C:/Users/angel/Desktop/Universidade/MADOBIS/TFM/semana_2/IsWakeSleepAnesthesia/IsWakeSleepAnesthesia/analysis/IS_SleepAnsthesia_Res1_Crit_Non_Auto_3_JSS.csv", sep = ",")
+df_nonauto_k3_JSS$critic = as.numeric(df_nonauto_k3_JSS$critic)
+df_nonauto_k3_JSS$igevenn = as.numeric(df_nonauto_k3_JSS$igevenn)
+df_nonauto_k3_JSS$igspBett = as.numeric(df_nonauto_k3_JSS$igspBett)
+# Check result
+head(df_nonauto_k3_JSS)
+```
+
+## Criticality:
+
+### Normality.
+
+```{r}
+conditions = unique(df_nonauto_k3_JSS$state)
+
+for (cond in conditions) {
+ cat("\n--- condition:", cond, "---\n")
+  subset_vals <- df_nonauto_k3_JSS$critic[df_nonauto_k3_JSS$state == cond]
+  ks_res <-  ks.test(subset_vals, "pnorm", mean(subset_vals), sd(subset_vals))
+  print(ks_res)
+}
+```
+
+No normality
+
+Visualization
+
+```{r}
+# Histogram
+ggplot(df_nonauto_k3_JSS, aes(x = critic)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_nonauto_k3_JSS, aes(sample = critic)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot por condition", x = "Theorical", y = "Samples")
+
+```
+
+No normality
+
+### Homocedasticity:
+
+```{r}
+leveneTest(critic ~ state, data = df_nonauto_k3_JSS)
+```
+
+The p-value is well below 0.001, allowing us to conclude that there are significant differences in the variances across the different conditions.
+
+### Analysis
+
+```{r}
+kruskal.test(critic ~ state, data = df_nonauto_k3_JSS)
+```
+
+The p-value is well below 0.001, indicating that at least two conditions show significant differences in their distributions. To identify which specific pairs differ significantly, we will perform a Dunn’s test.
+
+```{r}
+dunn_res = dunn.test(df_nonauto_k3_JSS$critic, df_nonauto_k3_JSS$state, method = "BH", kw = TRUE)
+```
+
+### Visualization:
+
+```{r}
+# Plot
+p <- ggplot(df_nonauto_k3_JSS, aes(x = state, y = critic, fill = state)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Criticality JSS k = 3 non autonomous",
+       x = "condition", y = "value")
+
+# P-values
+comparisons <- strsplit(dunn_res$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_res$P.adjusted
+)
+
+# Only significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+
+df_nonauto_k3_JSS$state <- factor(df_nonauto_k3_JSS$state, levels = unique(df_nonauto_k3_JSS$state))
+levels <- levels(df_nonauto_k3_JSS$state)
+
+# Names to position numbers
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Positions to labels
+df_sig$y.position <- seq(max(df_nonauto_k3_JSS$critic, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  # 
+)
+
+```
+
+## Eveness:
+
+### Normality.
+
+```{r}
+conditions = unique(df_nonauto_k3_JSS$state)
+
+for (cond in conditions) {
+ cat("\n--- condition:", cond, "---\n")
+  subset_vals <- df_nonauto_k3_JSS$igevenn[df_nonauto_k3_JSS$state == cond]
+  ks_res <-  ks.test(subset_vals, "pnorm", mean(subset_vals), sd(subset_vals))
+  print(ks_res)
+}
+```
+
+No normality
+
+Visualization
+
+```{r}
+# Histogram
+ggplot(df_nonauto_k3_JSS, aes(x = igevenn)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_nonauto_k3_JSS, aes(sample = igevenn)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot por condition", x = "Theorical", y = "Samples")
+
+```
+
+No normality
+
+### Homocedasticity:
+
+```{r}
+leveneTest(igevenn ~ state, data = df_nonauto_k3_JSS)
+```
+
+The p-value is well below 0.001, allowing us to conclude that there are significant differences in the variances across the different conditions.
+
+### Analysis
+
+```{r}
+kruskal.test(igevenn ~ state, data = df_nonauto_k3_JSS)
+```
+
+The p-value is well below 0.001, indicating that at least two conditions show significant differences in their distributions. To identify which specific pairs differ significantly, we will perform a Dunn’s test.
+
+```{r}
+dunn_res = dunn.test(df_nonauto_k3_JSS$igevenn, df_nonauto_k3_JSS$state, method = "BH", kw = FALSE)
+```
+
+### Visualization:
+
+```{r}
+# Plot
+p <- ggplot(df_nonauto_k3_JSS, aes(x = state, y = igevenn, fill = state)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Evenness JSS k = 3 non autonomous",
+       x = "condition", y = "value")
+
+# P-values
+comparisons <- strsplit(dunn_res$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_res$P.adjusted
+)
+
+# Only significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+
+df_nonauto_k3_JSS$state <- factor(df_nonauto_k3_JSS$state, levels = unique(df_nonauto_k3_JSS$state))
+levels <- levels(df_nonauto_k3_JSS$state)
+
+# Names to position numbers
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Positions to labels
+df_sig$y.position <- seq(max(df_nonauto_k3_JSS$igevenn, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  # 
+)
+
+```
+
+## Betweenness:
+
+### Normality.
+
+```{r}
+conditions = unique(df_nonauto_k3_JSS$state)
+
+for (cond in conditions) {
+ cat("\n--- condition:", cond, "---\n")
+  subset_vals <- df_nonauto_k3_JSS$igspBett[df_nonauto_k3_JSS$state == cond]
+  ks_res <-  ks.test(subset_vals, "pnorm", mean(subset_vals), sd(subset_vals))
+  print(ks_res)
+}
+```
+
+No normality
+
+Visualization
+
+```{r}
+# Histogram
+ggplot(df_nonauto_k3_JSS, aes(x = igspBett)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_nonauto_k3_JSS, aes(sample = igspBett)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot por condition", x = "Theorical", y = "Samples")
+
+```
+
+No normality
+
+### Homocedasticity:
+
+```{r}
+leveneTest(igspBett ~ state, data = df_nonauto_k3_JSS)
+```
+
+The p-value is well below 0.001, allowing us to conclude that there are significant differences in the variances across the different conditions.
+
+### Analysis:
+
+```{r}
+kruskal.test(igspBett ~ state, data = df_nonauto_k3_JSS)
+```
+
+The p-value is well below 0.001, indicating that at least two conditions show significant differences in their distributions. To identify which specific pairs differ significantly, we will perform a Dunn’s test.
+
+```{r}
+dunn_res = dunn.test(df_nonauto_k3_JSS$igspBett, df_nonauto_k3_JSS$state, method = "BH", kw = TRUE)
+```
+
+### Visualization:
+
+```{r}
+# Plot
+p <- ggplot(df_nonauto_k3_JSS, aes(x = state, y = igspBett, fill = state)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Mean betweenness JSS k = 3 non autonomous",
+       x = "condition", y = "value")
+
+# P-values
+comparisons <- strsplit(dunn_res$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_res$P.adjusted
+)
+
+# Only significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+
+df_nonauto_k3_JSS$state <- factor(df_nonauto_k3_JSS$state, levels = unique(df_nonauto_k3_JSS$state))
+levels <- levels(df_nonauto_k3_JSS$state)
+
+# Names to position numbers
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Positions to labels
+df_sig$y.position <- seq(max(df_nonauto_k3_JSS$igspBett, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  # 
+)
+
+```
+
+# Load non autonomous data JSS k = 5
+```{r}
+df_nonauto_k5_JSS = read.csv2("C:/Users/angel/Desktop/Universidade/MADOBIS/TFM/semana_2/IsWakeSleepAnesthesia/IsWakeSleepAnesthesia/analysis/IS_SleepAnsthesia_Res1_Crit_Non_Auto_5_JSS.csv", sep = ",")
+df_nonauto_k5_JSS$critic = as.numeric(df_nonauto_k5_JSS$critic)
+df_nonauto_k5_JSS$igevenn = as.numeric(df_nonauto_k5_JSS$igevenn)
+df_nonauto_k5_JSS$igspBett = as.numeric(df_nonauto_k5_JSS$igspBett)
+# Check result
+head(df_nonauto_k5_JSS)
+```
+
+## Criticality:
+
+### Normality.
+
+```{r}
+conditions = unique(df_nonauto_k5_JSS$state)
+
+for (cond in conditions) {
+ cat("\n--- condition:", cond, "---\n")
+  subset_vals <- df_nonauto_k5_JSS$critic[df_nonauto_k5_JSS$state == cond]
+  ks_res <-  ks.test(subset_vals, "pnorm", mean(subset_vals), sd(subset_vals))
+  print(ks_res)
+}
+```
+
+No normality
+
+Visualization
+
+```{r}
+# Histogram
+ggplot(df_nonauto_k5_JSS, aes(x = critic)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_nonauto_k5_JSS, aes(sample = critic)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot por condition", x = "Theorical", y = "Samples")
+
+```
+
+No normality
+
+### Homocedasticity:
+
+```{r}
+leveneTest(critic ~ state, data = df_nonauto_k5_JSS)
+```
+
+The p-value is well below 0.001, allowing us to conclude that there are significant differences in the variances across the different conditions.
+
+### Analysis
+
+```{r}
+kruskal.test(critic ~ state, data = df_nonauto_k5_JSS)
+```
+
+The p-value is well below 0.001, indicating that at least two conditions show significant differences in their distributions. To identify which specific pairs differ significantly, we will perform a Dunn’s test.
+
+```{r}
+dunn_res = dunn.test(df_nonauto_k5_JSS$critic, df_nonauto_k5_JSS$state, method = "BH", kw = TRUE)
+```
+
+### Visualization:
+
+```{r}
+# Plot
+p <- ggplot(df_nonauto_k5_JSS, aes(x = state, y = critic, fill = state)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Criticality JSS k = 5 non autonomous",
+       x = "condition", y = "value")
+
+# P-values
+comparisons <- strsplit(dunn_res$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_res$P.adjusted
+)
+
+# Only significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+
+df_nonauto_k5_JSS$state <- factor(df_nonauto_k5_JSS$state, levels = unique(df_nonauto_k5_JSS$state))
+levels <- levels(df_nonauto_k5_JSS$state)
+
+# Names to position numbers
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Positions to labels
+df_sig$y.position <- seq(max(df_nonauto_k5_JSS$critic, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  # 
+)
+
+```
+
+## Eveness:
+
+### Normality.
+
+```{r}
+conditions = unique(df_nonauto_k5_JSS$state)
+
+for (cond in conditions) {
+ cat("\n--- condition:", cond, "---\n")
+  subset_vals <- df_nonauto_k5_JSS$igevenn[df_nonauto_k5_JSS$state == cond]
+  ks_res <-  ks.test(subset_vals, "pnorm", mean(subset_vals), sd(subset_vals))
+  print(ks_res)
+}
+```
+
+No normality
+
+Visualization
+
+```{r}
+# Histogram
+ggplot(df_nonauto_k5_JSS, aes(x = igevenn)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_nonauto_k5_JSS, aes(sample = igevenn)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot por condition", x = "Theorical", y = "Samples")
+
+```
+
+No normality
+
+### Homocedasticity:
+
+```{r}
+leveneTest(igevenn ~ state, data = df_nonauto_k5_JSS)
+```
+
+The p-value is well below 0.001, allowing us to conclude that there are significant differences in the variances across the different conditions.
+
+### Analysis
+
+```{r}
+kruskal.test(igevenn ~ state, data = df_nonauto_k5_JSS)
+```
+
+The p-value is well below 0.001, indicating that at least two conditions show significant differences in their distributions. To identify which specific pairs differ significantly, we will perform a Dunn’s test.
+
+```{r}
+dunn_res = dunn.test(df_nonauto_k5_JSS$igevenn, df_nonauto_k5_JSS$state, method = "BH", kw = FALSE)
+```
+
+### Visualization:
+
+```{r}
+# Plot
+p <- ggplot(df_nonauto_k5_JSS, aes(x = state, y = igevenn, fill = state)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Evenness JSS k = 5 non autonomous",
+       x = "condition", y = "value")
+
+# P-values
+comparisons <- strsplit(dunn_res$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_res$P.adjusted
+)
+
+# Only significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+
+df_nonauto_k5_JSS$state <- factor(df_nonauto_k5_JSS$state, levels = unique(df_nonauto_k5_JSS$state))
+levels <- levels(df_nonauto_k5_JSS$state)
+
+# Names to position numbers
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Positions to labels
+df_sig$y.position <- seq(max(df_nonauto_k5_JSS$igevenn, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  # 
+)
+
+```
+
+## Betweenness:
+
+### Normality.
+
+```{r}
+conditions = unique(df_nonauto_k5_JSS$state)
+
+for (cond in conditions) {
+ cat("\n--- condition:", cond, "---\n")
+  subset_vals <- df_nonauto_k5_JSS$igspBett[df_nonauto_k5_JSS$state == cond]
+  ks_res <-  ks.test(subset_vals, "pnorm", mean(subset_vals), sd(subset_vals))
+  print(ks_res)
+}
+```
+
+No normality
+
+Visualization
+
+```{r}
+# Histogram
+ggplot(df_nonauto_k5_JSS, aes(x = igspBett)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_nonauto_k5_JSS, aes(sample = igspBett)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot por condition", x = "Theorical", y = "Samples")
+
+```
+
+No normality
+
+### Homocedasticity:
+
+```{r}
+leveneTest(igspBett ~ state, data = df_nonauto_k5_JSS)
+```
+
+The p-value is well below 0.001, allowing us to conclude that there are significant differences in the variances across the different conditions.
+
+### Analysis
+
+```{r}
+kruskal.test(igspBett ~ state, data = df_nonauto_k5_JSS)
+```
+
+The p-value is well below 0.001, indicating that at least two conditions show significant differences in their distributions. To identify which specific pairs differ significantly, we will perform a Dunn’s test.
+
+```{r}
+dunn_res = dunn.test(df_nonauto_k5_JSS$igspBett, df_nonauto_k5_JSS$state, method = "BH", kw = TRUE)
+```
+
+### Visualization:
+
+```{r}
+# Plot
+p <- ggplot(df_nonauto_k5_JSS, aes(x = state, y = igspBett, fill = state)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Mean betweenness k = 5 non autonomous",
+       x = "condition", y = "value")
+
+# P-values
+comparisons <- strsplit(dunn_res$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_res$P.adjusted
+)
+
+# Only significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+
+df_nonauto_k5_JSS$state <- factor(df_nonauto_k5_JSS$state, levels = unique(df_nonauto_k5_JSS$state))
+levels <- levels(df_nonauto_k5_JSS$state)
+
+# Names to position numbers
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Positions to labels
+df_sig$y.position <- seq(max(df_nonauto_k5_JSS$igspBett, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  # 
+)
+
+```
+
+# Load non autonomous data JSS k = 7
+```{r}
+df_nonauto_k7_JSS = read.csv2("C:/Users/angel/Desktop/Universidade/MADOBIS/TFM/semana_2/IsWakeSleepAnesthesia/IsWakeSleepAnesthesia/analysis/IS_SleepAnsthesia_Res1_Crit_Non_Auto_7_JSS.csv", sep = ",")
+df_nonauto_k7_JSS$critic = as.numeric(df_nonauto_k7_JSS$critic)
+df_nonauto_k7_JSS$igevenn = as.numeric(df_nonauto_k7_JSS$igevenn)
+df_nonauto_k7_JSS$igspBett = as.numeric(df_nonauto_k7_JSS$igspBett)
+# Check result
+head(df_nonauto_k7_JSS)
+```
+
+## Criticality:
+
+### Normality.
+
+```{r}
+conditions = unique(df_nonauto_k7_JSS$state)
+
+for (cond in conditions) {
+ cat("\n--- condition:", cond, "---\n")
+  subset_vals <- df_nonauto_k7_JSS$critic[df_nonauto_k7_JSS$state == cond]
+  ks_res <-  ks.test(subset_vals, "pnorm", mean(subset_vals), sd(subset_vals))
+  print(ks_res)
+}
+```
+
+No normality
+
+Visualization
+
+```{r}
+# Histogram
+ggplot(df_nonauto_k7_JSS, aes(x = critic)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_nonauto_k7_JSS, aes(sample = critic)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot por condition", x = "Theorical", y = "Samples")
+
+```
+
+No normality
+
+### Homocedasticity:
+
+```{r}
+leveneTest(critic ~ state, data = df_nonauto_k7_JSS)
+```
+
+The p-value is well below 0.001, allowing us to conclude that there are significant differences in the variances across the different conditions.
+
+### Analysis
+
+
+```{r}
+kruskal.test(critic ~ state, data = df_nonauto_k7_JSS)
+```
+
+The p-value is well below 0.001, indicating that at least two conditions show significant differences in their distributions. To identify which specific pairs differ significantly, we will perform a Dunn’s test.
+
+```{r}
+dunn_res = dunn.test(df_nonauto_k7_JSS$critic, df_nonauto_k7_JSS$state, method = "BH", kw = TRUE)
+```
+
+### Visualization:
+
+```{r}
+# Plot
+p <- ggplot(df_nonauto_k7_JSS, aes(x = state, y = critic, fill = state)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Criticality JSS k = 7 non autonomous",
+       x = "condition", y = "value")
+
+# P-values
+comparisons <- strsplit(dunn_res$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_res$P.adjusted
+)
+
+# Only significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+
+df_nonauto_k7_JSS$state <- factor(df_nonauto_k7_JSS$state, levels = unique(df_nonauto_k7_JSS$state))
+levels <- levels(df_nonauto_k7_JSS$state)
+
+# Names to position numbers
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Positions to labels
+df_sig$y.position <- seq(max(df_nonauto_k7_JSS$critic, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  # 
+)
+
+```
+
+## Eveness:
+
+### Normality.
+
+```{r}
+conditions = unique(df_nonauto_k7_JSS$state)
+
+for (cond in conditions) {
+ cat("\n--- condition:", cond, "---\n")
+  subset_vals <- df_nonauto_k7_JSS$igevenn[df_nonauto_k7_JSS$state == cond]
+  ks_res <-  ks.test(subset_vals, "pnorm", mean(subset_vals), sd(subset_vals))
+  print(ks_res)
+}
+```
+
+No normality
+
+Visualization
+
+```{r}
+# Histogram
+ggplot(df_nonauto_k7_JSS, aes(x = igevenn)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_nonauto_k7_JSS, aes(sample = igevenn)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot por condition", x = "Theorical", y = "Samples")
+
+```
+
+No normality
+
+### Homocedasticity:
+
+```{r}
+leveneTest(igevenn ~ state, data = df_nonauto_k7_JSS)
+```
+
+The p-value is well below 0.001, allowing us to conclude that there are significant differences in the variances across the different conditions.
+
+### Analysis
+
+```{r}
+kruskal.test(igevenn ~ state, data = df_nonauto_k7_JSS)
+```
+
+The p-value is well below 0.001, indicating that at least two conditions show significant differences in their distributions. To identify which specific pairs differ significantly, we will perform a Dunn’s test.
+
+```{r}
+dunn_res = dunn.test(df_nonauto_k7_JSS$igevenn, df_nonauto_k7_JSS$state, method = "BH", kw = FALSE)
+```
+
+### Visualization:
+
+```{r}
+# Plot
+p <- ggplot(df_nonauto_k7_JSS, aes(x = state, y = igevenn, fill = state)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Evenness JSS k = 7 non autonomous",
+       x = "condition", y = "value")
+
+# P-values
+comparisons <- strsplit(dunn_res$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_res$P.adjusted
+)
+
+# Only significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+
+df_nonauto_k7_JSS$state <- factor(df_nonauto_k3$state, levels = unique(df_nonauto_k3$state))
+levels <- levels(df_nonauto_k3$state)
+
+# Names to position numbers
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Positions to labels
+df_sig$y.position <- seq(max(df_nonauto_k3$igevenn, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  # 
+)
+
+```
+
+## Betweenness:
+
+### Normality.
+
+```{r}
+conditions = unique(df_nonauto_k3$state)
+
+for (cond in conditions) {
+ cat("\n--- condition:", cond, "---\n")
+  subset_vals <- df_nonauto_k3$igspBett[df_nonauto_k3$state == cond]
+  ks_res <-  ks.test(subset_vals, "pnorm", mean(subset_vals), sd(subset_vals))
+  print(ks_res)
+}
+```
+
+No normality
+
+Visualization
+
+```{r}
+# Histogram
+ggplot(df_nonauto_k3, aes(x = igspBett)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_nonauto_k3, aes(sample = igspBett)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot por condition", x = "Theorical", y = "Samples")
+
+```
+
+No normality
+
+### Homocedasticity:
+
+```{r}
+leveneTest(igspBett ~ state, data = df_nonauto_k3)
+```
+
+The p-value is well below 0.001, allowing us to conclude that there are significant differences in the variances across the different conditions.
+
+### Analysis
+
+```{r}
+kruskal.test(igspBett ~ state, data = df_nonauto_k3)
+```
+
+The p-value is well below 0.001, indicating that at least two conditions show significant differences in their distributions. To identify which specific pairs differ significantly, we will perform a Dunn’s test.
+
+```{r}
+dunn_res = dunn.test(df_nonauto_k3$igspBett, df_nonauto_k3$state, method = "BH", kw = TRUE)
+```
+
+### Visualization:
+
+```{r}
+# Plot
+p <- ggplot(df_nonauto_k3, aes(x = state, y = igspBett, fill = state)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Mean betweenness JSS k = 7 non autonomous",
+       x = "condition", y = "value")
+
+# P-values
+comparisons <- strsplit(dunn_res$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_res$P.adjusted
+)
+
+# Only significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+
+df_nonauto_k3$state <- factor(df_nonauto_k3$state, levels = unique(df_nonauto_k3$state))
+levels <- levels(df_nonauto_k3$state)
+
+# Names to position numbers
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Positions to labels
+df_sig$y.position <- seq(max(df_nonauto_k3$igspBett, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  # 
+)
+
+```
+
+# Load autonomous data JSS k=3:
+
+```{r}
+df_auto_k3_JSS = read.csv2("C:/Users/angel/Desktop/Universidade/MADOBIS/TFM/semana_2/IsWakeSleepAnesthesia/IsWakeSleepAnesthesia/analysis/IS_SleepAnsthesia_Res1_Crit_Auto_3_JSS.csv", sep = ",")
+df_auto_k3_JSS$critic = as.numeric(df_auto_k3_JSS$critic)
+df_auto_k3_JSS$igevenn = as.numeric(df_auto_k3_JSS$igevenn)
+df_auto_k3_JSS$igspBett = as.numeric(df_auto_k3_JSS$igspBett)
+# Check result
+head(df_auto_k3_JSS)
+```
+
+## Criticality:
+
+### Normality.
+
+```{r}
+conditions = unique(df_auto_k3_JSS$state)
+
+for (cond in conditions) {
+ cat("\n--- condition:", cond, "---\n")
+  subset_vals <- df_auto_k3_JSS$critic[df_auto_k3_JSS$state == cond]
+  ks_res <-  ks.test(subset_vals, "pnorm", mean(subset_vals), sd(subset_vals))
+  print(ks_res)
+}
+```
+
+No normality
+
+Visualization
+
+```{r}
+# Histogram
+ggplot(df_auto_k3_JSS, aes(x = critic)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_auto_k3_JSS, aes(sample = critic)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot por condition", x = "Theorical", y = "Samples")
+
+```
+
+No normality
+
+### Homocedasticity:
+
+```{r}
+leveneTest(critic ~ state, data = df_auto_k3_JSS)
+```
+
+The p-value is well below 0.001, allowing us to conclude that there are significant differences in the variances across the different conditions.
+
+### Analysis
+
+```{r}
+kruskal.test(critic ~ state, data = df_auto_k3_JSS)
+```
+
+The p-value is well below 0.001, indicating that at least two conditions show significant differences in their distributions. To identify which specific pairs differ significantly, we will perform a Dunn’s test.
+
+```{r}
+dunn_res = dunn.test(df_auto_k3_JSS$critic, df_auto_k3_JSS$state, method = "BH", kw = TRUE)
+```
+
+### Visualization:
+
+```{r}
+# Plot
+p <- ggplot(df_auto_k3_JSS, aes(x = state, y = critic, fill = state)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Criticality JSS k = 3 autonomous",
+       x = "condition", y = "value")
+
+# P-values
+comparisons <- strsplit(dunn_res$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_res$P.adjusted
+)
+
+# Only significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+
+df_auto_k3_JSS$state <- factor(df_auto_k3_JSS$state, levels = unique(df_auto_k3_JSS$state))
+levels <- levels(df_auto_k3_JSS$state)
+
+# Names to position numbers
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Positions to labels
+df_sig$y.position <- seq(max(df_auto_k3_JSS$critic, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  # 
+)
+
+```
+
+## Eveness:
+
+### Normality.
+
+```{r, eval = FALSE}
+conditions = unique(df_auto_k3_JSS$state)
+
+for (cond in conditions) {
+ cat("\n--- condition:", cond, "---\n")
+  subset_vals <- df_auto_k3_JSS$igevenn[df_auto_k3_JSS$state == cond]
+  ks_res <-  ks.test(subset_vals, "pnorm", mean(subset_vals), sd(subset_vals))
+  print(ks_res)
+}
+```
+
+No normality
+
+Visualization
+
+```{r, eval = FALSE}
+# Histogram
+ggplot(df_auto_k3_JSS, aes(x = igevenn)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_auto_k3_JSS, aes(sample = igevenn)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot por condition", x = "Theorical", y = "Samples")
+
+```
+
+No normality
+
+### Homocedasticity:
+
+```{r}
+leveneTest(igevenn ~ state, data = df_auto_k3_JSS)
+```
+
+The p-value is well below 0.001, allowing us to conclude that there are significant differences in the variances across the different conditions.
+
+### Analysis
+
+```{r}
+kruskal.test(igevenn ~ state, data = df_auto_k3_JSS)
+```
+
+The p-value is well below 0.001, indicating that at least two conditions show significant differences in their distributions. To identify which specific pairs differ significantly, we will perform a Dunn’s test.
+
+```{r}
+dunn_res = dunn.test(df_auto_k3_JSS$igevenn, df_auto_k3_JSS$state, method = "BH", kw = FALSE)
+```
+
+### Visualization:
+
+```{r, eval = FALSE}
+# Plot
+p <- ggplot(df_auto_k3_JSS, aes(x = state, y = igevenn, fill = state)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Evenness JSS k = 3 autonomous",
+       x = "condition", y = "value")
+
+# P-values
+comparisons <- strsplit(dunn_res$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_res$P.adjusted
+)
+
+# Only significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+
+df_auto_k3_JSS$state <- factor(df_auto_k3_JSS$state, levels = unique(df_auto_k3_JSS$state))
+levels <- levels(df_auto_k3_JSS$state)
+
+# Names to position numbers
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Positions to labels
+df_sig$y.position <- seq(max(df_auto_k3_JSS$igevenn, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  # 
+)
+
+```
+
+## Betweenness:
+
+### Normality.
+
+```{r}
+conditions = unique(df_auto_k3_JSS$state)
+
+for (cond in conditions) {
+ cat("\n--- condition:", cond, "---\n")
+  subset_vals <- df_auto_k3_JSS$igspBett[df_auto_k3_JSS$state == cond]
+  ks_res <-  ks.test(subset_vals, "pnorm", mean(subset_vals), sd(subset_vals))
+  print(ks_res)
+}
+```
+
+No normality
+
+Visualization
+
+```{r}
+# Histogram
+ggplot(df_auto_k3_JSS, aes(x = igspBett)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_auto_k3_JSS, aes(sample = igspBett)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot por condition", x = "Theorical", y = "Samples")
+
+```
+
+No normality
+
+### Homocedasticity:
+
+```{r}
+leveneTest(igspBett ~ state, data = df_auto_k3_JSS)
+```
+
+The p-value is well below 0.001, allowing us to conclude that there are significant differences in the variances across the different conditions.
+
+### Analysis:
+
+```{r}
+kruskal.test(igspBett ~ state, data = df_auto_k3_JSS)
+```
+
+The p-value is well below 0.001, indicating that at least two conditions show significant differences in their distributions. To identify which specific pairs differ significantly, we will perform a Dunn’s test.
+
+```{r}
+dunn_res = dunn.test(df_auto_k3_JSS$igspBett, df_auto_k3_JSS$state, method = "BH", kw = TRUE)
+```
+
+### Visualization:
+
+```{r}
+# Plot
+p <- ggplot(df_auto_k3_JSS, aes(x = state, y = igspBett, fill = state)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Mean betweenness JSS k = 3 autonomous",
+       x = "condition", y = "value")
+
+# P-values
+comparisons <- strsplit(dunn_res$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_res$P.adjusted
+)
+
+# Only significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+
+df_auto_k3_JSS$state <- factor(df_auto_k3_JSS$state, levels = unique(df_auto_k3_JSS$state))
+levels <- levels(df_auto_k3_JSS$state)
+
+# Names to position numbers
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Positions to labels
+df_sig$y.position <- seq(max(df_auto_k3_JSS$igspBett, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  # 
+)
+
+```
+
+# Load autonomous data JSS k = 5
+```{r}
+df_auto_k5_JSS = read.csv2("C:/Users/angel/Desktop/Universidade/MADOBIS/TFM/semana_2/IsWakeSleepAnesthesia/IsWakeSleepAnesthesia/analysis/IS_SleepAnsthesia_Res1_Crit_Auto_5_JSS.csv", sep = ",")
+df_auto_k5_JSS$critic = as.numeric(df_auto_k5_JSS$critic)
+df_auto_k5_JSS$igevenn = as.numeric(df_auto_k5_JSS$igevenn)
+df_auto_k5_JSS$igspBett = as.numeric(df_auto_k5_JSS$igspBett)
+# Check result
+head(df_auto_k5_JSS)
+```
+
+## Criticality:
+
+### Normality.
+
+```{r}
+conditions = unique(df_auto_k5_JSS$state)
+
+for (cond in conditions) {
+ cat("\n--- condition:", cond, "---\n")
+  subset_vals <- df_auto_k5_JSS$critic[df_auto_k5_JSS$state == cond]
+  ks_res <-  ks.test(subset_vals, "pnorm", mean(subset_vals), sd(subset_vals))
+  print(ks_res)
+}
+```
+
+No normality
+
+Visualization
+
+```{r}
+# Histogram
+ggplot(df_auto_k5_JSS, aes(x = critic)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_auto_k5_JSS, aes(sample = critic)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot por condition", x = "Theorical", y = "Samples")
+
+```
+
+No normality
+
+### Homocedasticity:
+
+```{r}
+leveneTest(critic ~ state, data = df_auto_k5_JSS)
+```
+
+The p-value is well below 0.001, allowing us to conclude that there are significant differences in the variances across the different conditions.
+
+### Analysis
+
+
+```{r}
+kruskal.test(critic ~ state, data = df_auto_k5_JSS)
+```
+
+The p-value is well below 0.001, indicating that at least two conditions show significant differences in their distributions. To identify which specific pairs differ significantly, we will perform a Dunn’s test.
+
+```{r}
+dunn_res = dunn.test(df_auto_k5_JSS$critic, df_auto_k5_JSS$state, method = "BH", kw = TRUE)
+```
+
+### Visualization:
+
+```{r}
+# Plot
+p <- ggplot(df_auto_k5_JSS, aes(x = state, y = critic, fill = state)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Criticality JSS k = 5 autonomous",
+       x = "condition", y = "value")
+
+# P-values
+comparisons <- strsplit(dunn_res$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_res$P.adjusted
+)
+
+# Only significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+
+df_auto_k5_JSS$state <- factor(df_auto_k5_JSS$state, levels = unique(df_auto_k5_JSS$state))
+levels <- levels(df_auto_k5_JSS$state)
+
+# Names to position numbers
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Positions to labels
+df_sig$y.position <- seq(max(df_auto_k5_JSS$critic, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  # 
+)
+
+```
+
+## Eveness:
+
+### Normality.
+
+```{r}
+conditions = unique(df_auto_k5_JSS$state)
+
+for (cond in conditions) {
+ cat("\n--- condition:", cond, "---\n")
+  subset_vals <- df_auto_k5_JSS$igevenn[df_auto_k5_JSS$state == cond]
+  ks_res <-  ks.test(subset_vals, "pnorm", mean(subset_vals), sd(subset_vals))
+  print(ks_res)
+}
+```
+
+No normality
+
+Visualization
+
+```{r, eval = FALSE}
+# Histogram
+ggplot(df_auto_k5_JSS, aes(x = igevenn)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_auto_k5_JSS, aes(sample = igevenn)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot por condition", x = "Theorical", y = "Samples")
+
+```
+
+No normality
+
+### Homocedasticity:
+
+```{r}
+leveneTest(igevenn ~ state, data = df_auto_k5_JSS)
+```
+
+The p-value is well below 0.001, allowing us to conclude that there are significant differences in the variances across the different conditions.
+
+### Analysis
+
+```{r}
+kruskal.test(igevenn ~ state, data = df_auto_k5_JSS)
+```
+
+The p-value is well below 0.001, indicating that at least two conditions show significant differences in their distributions. To identify which specific pairs differ significantly, we will perform a Dunn’s test.
+
+```{r}
+dunn_res = dunn.test(df_auto_k5_JSS$igevenn, df_auto_k5_JSS$state, method = "BH", kw = FALSE)
+```
+
+### Visualization:
+
+```{r, eval = FALSE}
+# Plot
+p <- ggplot(df_auto_k5_JSS, aes(x = state, y = igevenn, fill = state)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Evenness JSS k = 5 autonomous",
+       x = "condition", y = "value")
+
+# P-values
+comparisons <- strsplit(dunn_res$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_res$P.adjusted
+)
+
+# Only significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+
+df_auto_k5_JSS$state <- factor(df_auto_k5_JSS$state, levels = unique(df_auto_k5_JSS$state))
+levels <- levels(df_auto_k5_JSS$state)
+
+# Names to position numbers
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Positions to labels
+df_sig$y.position <- seq(max(df_auto_k5_JSS$igevenn, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  # 
+)
+
+```
+
+## Betweenness:
+
+### Normality.
+
+```{r}
+conditions = unique(df_auto_k5_JSS$state)
+
+for (cond in conditions) {
+ cat("\n--- condition:", cond, "---\n")
+  subset_vals <- df_auto_k5_JSS$igspBett[df_auto_k5_JSS$state == cond]
+  ks_res <-  ks.test(subset_vals, "pnorm", mean(subset_vals), sd(subset_vals))
+  print(ks_res)
+}
+```
+
+No normality
+
+Visualization
+
+```{r, eval = FALSE}
+# Histogram
+ggplot(df_auto_k5_JSS, aes(x = igspBett)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_auto_k5_JSS, aes(sample = igspBett)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot por condition", x = "Theorical", y = "Samples")
+
+```
+
+No normality
+
+### Homocedasticity:
+
+```{r}
+leveneTest(igspBett ~ state, data = df_auto_k5_JSS)
+```
+
+The p-value is well below 0.001, allowing us to conclude that there are significant differences in the variances across the different conditions.
+
+### Analysis
+
+```{r}
+kruskal.test(igspBett ~ state, data = df_auto_k5_JSS)
+```
+
+The p-value is well below 0.001, indicating that at least two conditions show significant differences in their distributions. To identify which specific pairs differ significantly, we will perform a Dunn’s test.
+
+```{r}
+dunn_res = dunn.test(df_auto_k5_JSS$igspBett, df_auto_k5_JSS$state, method = "BH", kw = TRUE)
+```
+
+### Visualization:
+
+```{r, eval = FALSE}
+# Plot
+p <- ggplot(df_auto_k5_JSS, aes(x = state, y = igspBett, fill = state)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Mean betweenness JSS k = 5 autonomous",
+       x = "condition", y = "value")
+
+# P-values
+comparisons <- strsplit(dunn_res$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_res$P.adjusted
+)
+
+# Only significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+
+df_auto_k5_JSS$state <- factor(df_auto_k5_JSS$state, levels = unique(df_auto_k5_JSS$state))
+levels <- levels(df_auto_k5_JSS$state)
+
+# Names to position numbers
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Positions to labels
+df_sig$y.position <- seq(max(df_auto_k5_JSS$igspBett, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  # 
+)
+
+```
+
+# Load autonomous data JSS k = 7
+```{r}
+df_auto_k7_JSS = read.csv2("C:/Users/angel/Desktop/Universidade/MADOBIS/TFM/semana_2/IsWakeSleepAnesthesia/IsWakeSleepAnesthesia/analysis/IS_SleepAnsthesia_Res1_Crit_Auto_7_JSS.csv", sep = ",")
+df_auto_k7_JSS$critic = as.numeric(df_auto_k7_JSS$critic)
+df_auto_k7_JSS$igevenn = as.numeric(df_auto_k7_JSS$igevenn)
+df_auto_k7_JSS$igspBett = as.numeric(df_auto_k7_JSS$igspBett)
+# Check result
+head(df_auto_k7_JSS)
+```
+
+## Criticality:
+
+### Normality.
+
+```{r}
+conditions = unique(df_auto_k7_JSS$state)
+
+for (cond in conditions) {
+ cat("\n--- condition:", cond, "---\n")
+  subset_vals <- df_auto_k7_JSS$critic[df_auto_k7_JSS$state == cond]
+  ks_res <-  ks.test(subset_vals, "pnorm", mean(subset_vals), sd(subset_vals))
+  print(ks_res)
+}
+```
+
+No normality
+
+Visualization
+
+```{r}
+# Histogram
+ggplot(df_auto_k7_JSS, aes(x = critic)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_auto_k7_JSS, aes(sample = critic)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot por condition", x = "Theorical", y = "Samples")
+
+```
+
+No normality
+
+### Homocedasticity:
+
+```{r}
+leveneTest(critic ~ state, data = df_auto_k7_JSS)
+```
+
+The p-value is well below 0.001, allowing us to conclude that there are significant differences in the variances across the different conditions.
+
+### Analysis
+
+```{r}
+kruskal.test(critic ~ state, data = df_auto_k7_JSS)
+```
+
+The p-value is well below 0.001, indicating that at least two conditions show significant differences in their distributions. To identify which specific pairs differ significantly, we will perform a Dunn’s test.
+
+```{r}
+dunn_res = dunn.test(df_auto_k7_JSS$critic, df_auto_k7_JSS$state, method = "BH", kw = TRUE)
+```
+
+### Visualization:
+
+```{r}
+# Plot
+p <- ggplot(df_auto_k7_JSS, aes(x = state, y = critic, fill = state)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Criticality JSS k = 7 autonomous",
+       x = "condition", y = "value")
+
+# P-values
+comparisons <- strsplit(dunn_res$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_res$P.adjusted
+)
+
+# Only significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+
+df_auto_k7_JSS$state <- factor(df_auto_k7_JSS$state, levels = unique(df_auto_k7_JSS$state))
+levels <- levels(df_auto_k7_JSS$state)
+
+# Names to position numbers
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Positions to labels
+df_sig$y.position <- seq(max(df_auto_k7_JSS$critic, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  # 
+)
+
+```
+
+## Eveness:
+
+### Normality.
+
+```{r}
+conditions = unique(df_auto_k7_JSS$state)
+
+for (cond in conditions) {
+ cat("\n--- condition:", cond, "---\n")
+  subset_vals <- df_auto_k7_JSS$igevenn[df_auto_k7_JSS$state == cond]
+  ks_res <-  ks.test(subset_vals, "pnorm", mean(subset_vals), sd(subset_vals))
+  print(ks_res)
+}
+```
+
+No normality
+
+Visualization
+
+```{r}
+# Histogram
+ggplot(df_auto_k7_JSS, aes(x = igevenn)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_auto_k7_JSS, aes(sample = igevenn)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot por condition", x = "Theorical", y = "Samples")
+
+```
+
+No normality
+
+### Homocedasticity:
+
+```{r}
+leveneTest(igevenn ~ state, data = df_auto_k7_JSS)
+```
+
+The p-value is well below 0.001, allowing us to conclude that there are significant differences in the variances across the different conditions.
+
+### Analysis
+
+```{r}
+kruskal.test(igevenn ~ state, data = df_auto_k7_JSS)
+```
+
+The p-value is well below 0.001, indicating that at least two conditions show significant differences in their distributions. To identify which specific pairs differ significantly, we will perform a Dunn’s test.
+
+```{r}
+dunn_res = dunn.test(df_auto_k7_JSS$igevenn, df_auto_k7_JSS$state, method = "BH", kw = FALSE)
+```
+
+### Visualization:
+
+```{r}
+# Plot
+p <- ggplot(df_auto_k7_JSS, aes(x = state, y = igevenn, fill = state)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Evenness JSS k = 7 autonomous",
+       x = "condition", y = "value")
+
+# P-values
+comparisons <- strsplit(dunn_res$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_res$P.adjusted
+)
+
+# Only significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+
+df_auto_k7_JSS$state <- factor(df_auto_k7_JSS$state, levels = unique(df_auto_k7_JSS$state))
+levels <- levels(df_auto_k7_JSS$state)
+
+# Names to position numbers
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Positions to labels
+df_sig$y.position <- seq(max(df_auto_k7_JSS$igevenn, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  # 
+)
+
+```
+
+## Betweenness:
+
+### Normality.
+
+```{r}
+conditions = unique(df_auto_k7_JSS$state)
+
+for (cond in conditions) {
+ cat("\n--- condition:", cond, "---\n")
+  subset_vals <- df_auto_k7_JSS$igspBett[df_auto_k7_JSS$state == cond]
+  ks_res <-  ks.test(subset_vals, "pnorm", mean(subset_vals), sd(subset_vals))
+  print(ks_res)
+}
+```
+
+No normality
+
+Visualization
+
+```{r}
+# Histogram
+ggplot(df_auto_k7_JSS, aes(x = igspBett)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_auto_k7_JSS, aes(sample = igspBett)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot por condition", x = "Theorical", y = "Samples")
+
+```
+
+No normality
+
+### Homocedasticity:
+
+```{r}
+leveneTest(igspBett ~ state, data = df_auto_k7_JSS)
+```
+
+The p-value is well below 0.001, allowing us to conclude that there are significant differences in the variances across the different conditions.
+
+### Analysis
+
+```{r}
+kruskal.test(igspBett ~ state, data = df_auto_k7_JSS)
+```
+
+The p-value is well below 0.001, indicating that at least two conditions show significant differences in their distributions. To identify which specific pairs differ significantly, we will perform a Dunn’s test.
+
+```{r}
+dunn_res = dunn.test(df_auto_k7_JSS$igspBett, df_auto_k7_JSS$state, method = "BH", kw = TRUE)
+```
+
+### Visualization:
+
+```{r}
+# Plot
+p <- ggplot(df_auto_k7_JSS, aes(x = state, y = igspBett, fill = state)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Mean betweenness JSS k = 7 autonomous",
+       x = "condition", y = "value")
+
+# P-values
+comparisons <- strsplit(dunn_res$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_res$P.adjusted
+)
+
+# Only significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+
+df_auto_k7_JSS$state <- factor(df_auto_k7_JSS$state, levels = unique(df_auto_k7_JSS$state))
+levels <- levels(df_auto_k7_JSS$state)
+
+# Names to position numbers
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Positions to labels
+df_sig$y.position <- seq(max(df_auto_k7_JSS$igspBett, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  # 
+)
+
+```
+
+
+# Load Big results k = 5
+
+```{r}
+df_5_big = read.csv2("C:/Users/angel/Desktop/Universidade/MADOBIS/TFM/semana_2/IsWakeSleepAnesthesia/IsWakeSleepAnesthesia/analysis/resultsBig2_k5.csv")
+df_5_big$critic = as.numeric(df_5_big$critic)
+df_5_big$evenness = as.numeric(df_5_big$evenness)
+
+# Check result
+head(df_5_big)
+```
+
+## Criticality:
+
+### Normality.
+
+```{r}
+conditions = unique(df_5_big$state)
+
+for (cond in conditions) {
+ cat("\n--- condition:", cond, "---\n")
+  subset_vals <- df_5_big$critic[df_5_big$state == cond]
+  ks_res <-  ks.test(subset_vals, "pnorm", mean(subset_vals), sd(subset_vals))
+  print(ks_res)
+}
+```
+
+Visualization
+
+```{r}
+# Histogram
+ggplot(df_5_big, aes(x = critic)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_5_big, aes(sample = critic)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot por condition", x = "Theorical", y = "Samples")
+
+```
+
+### Homocedasticity:
+
+```{r}
+leveneTest(critic ~ state, data = df_5_big)
+```
+
+### Analysis
+
+```{r}
+kruskal.test(critic ~ state, data = df_5_big)
+```
+
+The p-value is well below 0.001, indicating that at least two conditions show significant differences in their distributions. To identify which specific pairs differ significantly, we will perform a Dunn’s test.
+
+```{r}
+dunn_res = dunn.test(df_5_big$critic, df_5_big$state, method = "BH", kw = TRUE)
+```
+
+### Visualization:
+
+```{r}
+# Plot
+p <- ggplot(df_5_big, aes(x = state, y = critic, fill = state)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Criticality J k = 5 Big",
+       x = "condition", y = "value")
+
+# P-values
+comparisons <- strsplit(dunn_res$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_res$P.adjusted
+)
+
+# Only significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+
+df_5_big$state <- factor(df_5_big$state, levels = unique(df_5_big$state))
+levels <- levels(df_5_big$state)
+
+# Names to position numbers
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Positions to labels
+df_sig$y.position <- seq(max(df_5_big$critic, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  # 
+)
+
+```
+
+## Eveness:
+
+### Normality.
+
+```{r}
+conditions = unique(df_5_big$state)
+
+for (cond in conditions) {
+ cat("\n--- condition:", cond, "---\n")
+  subset_vals <- df_5_big$evenness[df_5_big$state == cond]
+  ks_res <-  ks.test(subset_vals)
+  print(ks_res)
+}
+```
+
+No normality
+
+Visualization
+
+```{r}
+# Histogram
+ggplot(df_5_big, aes(x = evenness)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_5_big, aes(sample = evenness)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot por condition", x = "Theorical", y = "Samples")
+
+```
+
+No normality
+
+### Homocedasticity:
+
+```{r}
+leveneTest(evenness ~ state, data = df_5_big)
+```
+
+The p-value is well below 0.001, allowing us to conclude that there are significant differences in the variances across the different conditions.
+
+### Analysis
+
+```{r}
+kruskal.test(evenness ~ state, data = df_5_big)
+```
+
+The p-value is well below 0.001, indicating that at least two conditions show significant differences in their distributions. To identify which specific pairs differ significantly, we will perform a Dunn’s test.
+
+```{r}
+dunn_res = dunn.test(df_5_big$evenness, df_5_big$state, method = "BH", kw = FALSE)
+```
+
+### Visualization:
+
+```{r, eval=FALSE}
+# Plot
+p <- ggplot(df_5_big, aes(x = state, y = evenness, fill = state)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Evenness J k = 5 Big",
+       x = "condition", y = "value")
+
+# P-values
+comparisons <- strsplit(dunn_res$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_res$P.adjusted
+)
+
+# Only significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+
+df_5_big$state <- factor(df_5_big$state, levels = unique(df_5_big$state))
+levels <- levels(df_5_big$state)
+
+# Names to position numbers
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Positions to labels
+df_sig$y.position <- seq(max(df_5_big$evenness, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE 
+)
+
+```
+
+# Load Big results k = 7
+
+```{r}
+df_7_big = read.csv2("C:/Users/angel/Desktop/Universidade/MADOBIS/TFM/semana_2/IsWakeSleepAnesthesia/IsWakeSleepAnesthesia/analysis/resultsBig2_k7.csv")
+df_7_big$critic = as.numeric(df_7_big$critic)
+df_7_big$evenness = as.numeric(df_7_big$evenness)
+
+# Check result
+head(df_7_big)
+```
+
+## Criticality:
+
+### Normality.
+
+```{r}
+conditions = unique(df_7_big$state)
+
+for (cond in conditions) {
+ cat("\n--- condition:", cond, "---\n")
+  subset_vals <- df_7_big$critic[df_7_big$state == cond]
+  ks_res <-  ks.test(subset_vals, "pnorm", mean(subset_vals), sd(subset_vals))
+  print(ks_res)
+}
+```
+
+Visualization
+
+```{r}
+# Histogram
+ggplot(df_7_big, aes(x = critic)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_7_big, aes(sample = critic)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot por condition", x = "Theorical", y = "Samples")
+
+```
+
+### Homocedasticity:
+
+```{r}
+leveneTest(critic ~ state, data = df_7_big)
+```
+
+### Analysis
+
+```{r}
+kruskal.test(critic ~ state, data = df_7_big)
+```
+
+The p-value is well below 0.001, indicating that at least two conditions show significant differences in their distributions. To identify which specific pairs differ significantly, we will perform a Dunn’s test.
+
+```{r}
+dunn_res = dunn.test(df_7_big$critic, df_7_big$state, method = "BH", kw = TRUE)
+```
+
+### Visualization:
+
+```{r}
+# Plot
+p <- ggplot(df_7_big, aes(x = state, y = critic, fill = state)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Criticality J k = 7 Big",
+       x = "condition", y = "value")
+
+# P-values
+comparisons <- strsplit(dunn_res$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_res$P.adjusted
+)
+
+# Only significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+
+df_7_big$state <- factor(df_7_big$state, levels = unique(df_7_big$state))
+levels <- levels(df_7_big$state)
+
+# Names to position numbers
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Positions to labels
+df_sig$y.position <- seq(max(df_7_big$critic, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  # 
+)
+
+```
+
+## Eveness:
+
+### Normality.
+
+```{r}
+conditions = unique(df_7_big$state)
+
+for (cond in conditions) {
+ cat("\n--- condition:", cond, "---\n")
+  subset_vals <- df_7_big$evenness[df_7_big$state == cond]
+  ks_res <-  ks.test(subset_vals, "pnorm", mean(subset_vals), sd(subset_vals))
+  print(ks_res)
+}
+```
+
+No normality
+
+Visualization
+
+```{r, eval=FALSE}
+# Histogram
+ggplot(df_7_big, aes(x = evenness)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_7_big, aes(sample = evenness)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot por condition", x = "Theorical", y = "Samples")
+
+```
+
+No normality
+
+### Homocedasticity:
+
+```{r, eval=FALSE}
+leveneTest(evenness ~ state, data = df_7_big)
+```
+
+The p-value is well below 0.001, allowing us to conclude that there are significant differences in the variances across the different conditions.
+
+### Analysis
+
+```{r, eval=FALSE}
+kruskal.test(evenness ~ state, data = df_7_big)
+```
+
+The p-value is well below 0.001, indicating that at least two conditions show significant differences in their distributions. To identify which specific pairs differ significantly, we will perform a Dunn’s test.
+
+```{r, eval=FALSE}
+dunn_res = dunn.test(df_7_big$evenness, df_7_big$state, method = "BH", kw = FALSE)
+```
+
+### Visualization:
+
+```{r, eval=FALSE}
+# Plot
+p <- ggplot(df_7_big, aes(x = state, y = evenness, fill = state)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Evenness J k = 7 Big",
+       x = "condition", y = "value")
+
+# P-values
+comparisons <- strsplit(dunn_res$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_res$P.adjusted
+)
+
+# Only significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+
+df_7_big$state <- factor(df_7_big$state, levels = unique(df_7_big$state))
+levels <- levels(df_7_big$state)
+
+# Names to position numbers
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Positions to labels
+df_sig$y.position <- seq(max(df_7_big$evenness, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  # 
+)
+
+```
+
+# Load Big results k = 10
+
+```{r}
+df_10_big = read.csv2("C:/Users/angel/Desktop/Universidade/MADOBIS/TFM/semana_2/IsWakeSleepAnesthesia/IsWakeSleepAnesthesia/analysis/resultsBig2_k10.csv")
+df_10_big$critic = as.numeric(df_10_big$critic)
+df_10_big$evenness = as.numeric(df_10_big$evenness)
+
+# Check result
+head(df_10_big)
+```
+
+## Criticality:
+
+### Normality.
+
+```{r}
+conditions = unique(df_10_big$state)
+
+for (cond in conditions) {
+ cat("\n--- condition:", cond, "---\n")
+  subset_vals <- df_10_big$critic[df_10_big$state == cond]
+  ks_res <-  ks.test(subset_vals, "pnorm", mean(subset_vals), sd(subset_vals))
+  print(ks_res)
+}
+```
+
+Visualization
+
+```{r}
+# Histogram
+ggplot(df_10_big, aes(x = critic)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_10_big, aes(sample = critic)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot por condition", x = "Theorical", y = "Samples")
+
+```
+
+
+
+### Homocedasticity:
+
+```{r}
+leveneTest(critic ~ state, data = df_10_big)
+```
+
+### Analysis
+
+```{r}
+kruskal.test(critic ~ state, data = df_10_big)
+```
+
+The p-value is well below 0.001, indicating that at least two conditions show significant differences in their distributions. To identify which specific pairs differ significantly, we will perform a Dunn’s test.
+
+```{r}
+dunn_res = dunn.test(df_10_big$critic, df_10_big$state, method = "BH", kw = TRUE)
+```
+
+### Visualization:
+
+```{r}
+# Plot
+p <- ggplot(df_10_big, aes(x = state, y = critic, fill = state)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Criticality J k = 10 Big",
+       x = "condition", y = "value")
+
+# P-values
+comparisons <- strsplit(dunn_res$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_res$P.adjusted
+)
+
+# Only significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+
+df_10_big$state <- factor(df_10_big$state, levels = unique(df_10_big$state))
+levels <- levels(df_10_big$state)
+
+# Names to position numbers
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Positions to labels
+df_sig$y.position <- seq(max(df_10_big$critic, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  # 
+)
+
+```
+
+## Eveness:
+
+### Normality.
+
+```{r, eval=FALSE}
+conditions = unique(df_10_big$state)
+
+for (cond in conditions) {
+ cat("\n--- condition:", cond, "---\n")
+  subset_vals <- df_10_big$evenness[df_10_big$state == cond]
+  ks_res <-  ks.test(subset_vals, "pnorm", mean(subset_vals), sd(subset_vals))
+  print(ks_res)
+}
+```
+
+No normality
+
+Visualization
+
+```{r, eval=FALSE}
+# Histogram
+ggplot(df_10_big, aes(x = evenness)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_10_big, aes(sample = evenness)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot por condition", x = "Theorical", y = "Samples")
+
+```
+
+No normality
+
+### Homocedasticity:
+
+```{r, eval=FALSE}
+leveneTest(evenness ~ state, data = df_10_big)
+```
+
+The p-value is well below 0.001, allowing us to conclude that there are significant differences in the variances across the different conditions.
+
+### Analysis
+
+```{r, eval=FALSE}
+kruskal.test(evenness ~ state, data = df_10_big)
+```
+
+The p-value is well below 0.001, indicating that at least two conditions show significant differences in their distributions. To identify which specific pairs differ significantly, we will perform a Dunn’s test.
+
+```{r, eval=FALSE}
+dunn_res = dunn.test(df_10_big$evenness, df_10_big$state, method = "BH", kw = FALSE)
+```
+
+### Visualization:
+
+```{r, eval=FALSE}
+# Plot
+p <- ggplot(df_10_big, aes(x = state, y = evenness, fill = state)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Evenness J k = 10 Big",
+       x = "condition", y = "value")
+
+# P-values
+comparisons <- strsplit(dunn_res$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_res$P.adjusted
+)
+
+# Only significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+
+df_10_big$state <- factor(df_10_big$state, levels = unique(df_10_big$state))
+levels <- levels(df_10_big$state)
+
+# Names to position numbers
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Positions to labels
+df_sig$y.position <- seq(max(df_10_big$evenness, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  # 
+)
+
+```
+
+# Load Big results JSS k = 5
+
+```{r}
+df_5_big_JSS = read.csv2("C:/Users/angel/Desktop/Universidade/MADOBIS/TFM/semana_2/IsWakeSleepAnesthesia/IsWakeSleepAnesthesia/analysis/resultsBig2_k5_JSS.csv")
+df_5_big_JSS$critic = as.numeric(df_5_big_JSS$critic)
+df_5_big_JSS$evenness = as.numeric(df_5_big_JSS$evenness)
+
+# Check result
+head(df_5_big_JSS)
+```
+
+## Criticality:
+
+### Normality.
+
+```{r}
+conditions = unique(df_5_big_JSS$state)
+
+for (cond in conditions) {
+ cat("\n--- condition:", cond, "---\n")
+  subset_vals <- df_5_big_JSS$critic[df_5_big_JSS$state == cond]
+  ks_res <-  ks.test(subset_vals, "pnorm", mean(subset_vals), sd(subset_vals))
+  print(ks_res)
+}
+```
+
+Visualization
+
+```{r}
+# Histogram
+ggplot(df_5_big_JSS, aes(x = critic)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_5_big_JSS, aes(sample = critic)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot por condition", x = "Theorical", y = "Samples")
+
+```
+
+### Homocedasticity:
+
+```{r}
+leveneTest(critic ~ state, data = df_5_big_JSS)
+```
+
+### Analysis
+
+```{r}
+kruskal.test(critic ~ state, data = df_5_big_JSS)
+```
+
+The p-value is well below 0.001, indicating that at least two conditions show significant differences in their distributions. To identify which specific pairs differ significantly, we will perform a Dunn’s test.
+
+```{r}
+dunn_res = dunn.test(df_5_big_JSS$critic, df_5_big_JSS$state, method = "BH", kw = TRUE)
+```
+
+### Visualization:
+
+```{r}
+# Plot
+p <- ggplot(df_5_big_JSS, aes(x = state, y = critic, fill = state)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Criticality JSS k = 5 Big",
+       x = "condition", y = "value")
+
+# P-values
+comparisons <- strsplit(dunn_res$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_res$P.adjusted
+)
+
+# Only significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+
+df_5_big_JSS$state <- factor(df_5_big_JSS$state, levels = unique(df_5_big_JSS$state))
+levels <- levels(df_5_big_JSS$state)
+
+# Names to position numbers
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Positions to labels
+df_sig$y.position <- seq(max(df_5_big_JSS$critic, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  # 
+)
+
+```
+
+## Eveness:
+
+### Normality.
+
+```{r}
+conditions = unique(df_5_big_JSS$state)
+
+for (cond in conditions) {
+ cat("\n--- condition:", cond, "---\n")
+  subset_vals <- df_5_big_JSS$evenness[df_5_big_JSS$state == cond]
+  ks_res <-  ks.test(subset_vals, "pnorm", mean(subset_vals), sd(subset_vals))
+  print(ks_res)
+}
+```
+
+No normality
+
+Visualization
+
+```{r}
+# Histogram
+ggplot(df_5_big_JSS, aes(x = evenness)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_5_big_JSS, aes(sample = evenness)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot por condition", x = "Theorical", y = "Samples")
+
+```
+
+No normality
+
+### Homocedasticity:
+
+```{r}
+leveneTest(evenness ~ state, data = df_5_big_JSS)
+```
+
+The p-value is well below 0.001, allowing us to conclude that there are significant differences in the variances across the different conditions.
+
+### Analysis
+
+```{r}
+kruskal.test(evenness ~ state, data = df_5_big_JSS)
+```
+
+The p-value is well below 0.001, indicating that at least two conditions show significant differences in their distributions. To identify which specific pairs differ significantly, we will perform a Dunn’s test.
+
+```{r}
+dunn_res = dunn.test(df_5_big_JSS$evenness, df_5_big_JSS$state, method = "BH", kw = FALSE)
+```
+
+### Visualization:
+
+```{r}
+# Plot
+p <- ggplot(df_5_big_JSS, aes(x = state, y = evenness, fill = state)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Evenness JSS k = 5 Big",
+       x = "condition", y = "value")
+
+# P-values
+comparisons <- strsplit(dunn_res$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_res$P.adjusted
+)
+
+# Only significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+
+df_5_big_JSS$state <- factor(df_5_big_JSS$state, levels = unique(df_5_big_JSS$state))
+levels <- levels(df_5_big_JSS$state)
+
+# Names to position numbers
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Positions to labels
+df_sig$y.position <- seq(max(df_5_big_JSS$evenness, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  # 
+)
+
+```
+
+# Load Big results JSS k = 7
+
+```{r}
+df_7_big_JSS = read.csv2("C:/Users/angel/Desktop/Universidade/MADOBIS/TFM/semana_2/IsWakeSleepAnesthesia/IsWakeSleepAnesthesia/analysis/resultsBig2_k7_JSS.csv")
+df_7_big_JSS$critic = as.numeric(df_7_big_JSS$critic)
+df_7_big_JSS$evenness = as.numeric(df_7_big_JSS$evenness)
+
+# Check result
+head(df_7_big_JSS)
+```
+
+## Criticality:
+
+### Normality.
+
+```{r}
+conditions = unique(df_7_big_JSS$state)
+
+for (cond in conditions) {
+ cat("\n--- condition:", cond, "---\n")
+  subset_vals <- df_7_big_JSS$critic[df_7_big_JSS$state == cond]
+  ks_res <-  ks.test(subset_vals, "pnorm", mean(subset_vals), sd(subset_vals))
+  print(ks_res)
+}
+```
+
+Visualization
+
+```{r}
+# Histogram
+ggplot(df_7_big_JSS, aes(x = critic)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_7_big_JSS, aes(sample = critic)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot por condition", x = "Theorical", y = "Samples")
+
+```
+
+### Homocedasticity:
+
+```{r}
+leveneTest(critic ~ state, data = df_7_big_JSS)
+```
+
+### Analysis
+
+```{r}
+kruskal.test(critic ~ state, data = df_7_big_JSS)
+```
+
+The p-value is well below 0.001, indicating that at least two conditions show significant differences in their distributions. To identify which specific pairs differ significantly, we will perform a Dunn’s test.
+
+```{r}
+dunn_res = dunn.test(df_7_big_JSS$critic, df_7_big_JSS$state, method = "BH", kw = TRUE)
+```
+
+### Visualization:
+
+```{r}
+# Plot
+p <- ggplot(df_7_big_JSS, aes(x = state, y = critic, fill = state)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Criticality JSS k = 7 Big",
+       x = "condition", y = "value")
+
+# P-values
+comparisons <- strsplit(dunn_res$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_res$P.adjusted
+)
+
+# Only significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+
+df_7_big_JSS$state <- factor(df_7_big_JSS$state, levels = unique(df_7_big_JSS$state))
+levels <- levels(df_7_big_JSS$state)
+
+# Names to position numbers
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Positions to labels
+df_sig$y.position <- seq(max(df_7_big_JSS$critic, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  # 
+)
+
+```
+
+## Eveness:
+
+### Normality.
+
+```{r}
+conditions = unique(df_7_big_JSS$state)
+
+for (cond in conditions) {
+ cat("\n--- condition:", cond, "---\n")
+  subset_vals <- df_7_big_JSS$evenness[df_7_big_JSS$state == cond]
+  ks_res <-  ks.test(subset_vals, "pnorm", mean(subset_vals), sd(subset_vals))
+  print(ks_res)
+}
+```
+
+No normality
+
+Visualization
+
+```{r}
+# Histogram
+ggplot(df_7_big_JSS, aes(x = evenness)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_7_big_JSS, aes(sample = evenness)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot por condition", x = "Theorical", y = "Samples")
+
+```
+
+No normality
+
+### Homocedasticity:
+
+```{r}
+leveneTest(evenness ~ state, data = df_7_big_JSS)
+```
+
+The p-value is well below 0.001, allowing us to conclude that there are significant differences in the variances across the different conditions.
+
+### Analysis
+
+```{r}
+kruskal.test(evenness ~ state, data = df_7_big_JSS)
+```
+
+The p-value is well below 0.001, indicating that at least two conditions show significant differences in their distributions. To identify which specific pairs differ significantly, we will perform a Dunn’s test.
+
+```{r}
+dunn_res = dunn.test(df_7_big_JSS$evenness, df_7_big_JSS$state, method = "BH", kw = FALSE)
+```
+
+### Visualization:
+
+```{r}
+# Plot
+p <- ggplot(df_7_big_JSS, aes(x = state, y = evenness, fill = state)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Evenness JSS k = 7 Big",
+       x = "condition", y = "value")
+
+# P-values
+comparisons <- strsplit(dunn_res$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_res$P.adjusted
+)
+
+# Only significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+
+df_7_big_JSS$state <- factor(df_7_big_JSS$state, levels = unique(df_7_big_JSS$state))
+levels <- levels(df_7_big_JSS$state)
+
+# Names to position numbers
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Positions to labels
+df_sig$y.position <- seq(max(df_7_big_JSS$evenness, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  # 
+)
+
+```
+
+# Load Big results JSS k = 10
+
+```{r}
+df_10_big_JSS = read.csv2("C:/Users/angel/Desktop/Universidade/MADOBIS/TFM/semana_2/IsWakeSleepAnesthesia/IsWakeSleepAnesthesia/analysis/resultsBig2_k10_JSS.csv")
+df_10_big_JSS$critic = as.numeric(df_10_big_JSS$critic)
+df_10_big_JSS$evenness = as.numeric(df_10_big_JSS$evenness)
+
+# Check result
+head(df_10_big_JSS)
+```
+
+## Criticality:
+
+### Normality.
+
+```{r}
+conditions = unique(df_10_big_JSS$state)
+
+for (cond in conditions) {
+ cat("\n--- condition:", cond, "---\n")
+  subset_vals <- df_10_big_JSS$critic[df_10_big_JSS$state == cond]
+  ks_res <-  ks.test(subset_vals, "pnorm", mean(subset_vals), sd(subset_vals))
+  print(ks_res)
+}
+```
+
+Visualization
+
+```{r}
+# Histogram
+ggplot(df_10_big_JSS, aes(x = critic)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_10_big_JSS, aes(sample = critic)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot por condition", x = "Theorical", y = "Samples")
+
+```
+
+### Homocedasticity:
+
+```{r}
+leveneTest(critic ~ state, data = df_10_big_JSS)
+```
+
+### Analysis
+
+```{r}
+kruskal.test(critic ~ state, data = df_10_big_JSS)
+```
+
+The p-value is well below 0.001, indicating that at least two conditions show significant differences in their distributions. To identify which specific pairs differ significantly, we will perform a Dunn’s test.
+
+```{r}
+dunn_res = dunn.test(df_10_big_JSS$critic, df_10_big_JSS$state, method = "BH", kw = TRUE)
+```
+
+### Visualization:
+
+```{r}
+# Plot
+p <- ggplot(df_10_big_JSS, aes(x = state, y = critic, fill = state)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Criticality JSS k = 10 Big",
+       x = "condition", y = "value")
+
+# P-values
+comparisons <- strsplit(dunn_res$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_res$P.adjusted
+)
+
+# Only significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+
+df_10_big_JSS$state <- factor(df_10_big_JSS$state, levels = unique(df_10_big_JSS$state))
+levels <- levels(df_10_big_JSS$state)
+
+# Names to position numbers
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Positions to labels
+df_sig$y.position <- seq(max(df_10_big_JSS$critic, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  # 
+)
+
+```
+
+## Eveness:
+
+### Normality.
+
+```{r}
+conditions = unique(df_10_big_JSS$state)
+
+for (cond in conditions) {
+ cat("\n--- condition:", cond, "---\n")
+  subset_vals <- df_10_big_JSS$evenness[df_10_big_JSS$state == cond]
+  ks_res <-  ks.test(subset_vals, "pnorm", mean(subset_vals), sd(subset_vals))
+  print(ks_res)
+}
+```
+
+No normality
+
+Visualization
+
+```{r}
+# Histogram
+ggplot(df_10_big_JSS, aes(x = evenness)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_10_big_JSS, aes(sample = evenness)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ state, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot por condition", x = "Theorical", y = "Samples")
+
+```
+
+No normality
+
+### Homocedasticity:
+
+```{r}
+leveneTest(evenness ~ state, data = df_10_big_JSS)
+```
+
+The p-value is well below 0.001, allowing us to conclude that there are significant differences in the variances across the different conditions.
+
+### Analysis
+
+```{r}
+kruskal.test(evenness ~ state, data = df_10_big_JSS)
+```
+
+The p-value is well below 0.001, indicating that at least two conditions show significant differences in their distributions. To identify which specific pairs differ significantly, we will perform a Dunn’s test.
+
+```{r}
+dunn_res = dunn.test(df_10_big_JSS$evenness, df_10_big_JSS$state, method = "BH", kw = FALSE)
+```
+
+### Visualization:
+
+```{r}
+# Plot
+p <- ggplot(df_10_big_JSS, aes(x = state, y = evenness, fill = state)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Evenness JSS k = 10 Big",
+       x = "condition", y = "value")
+
+# P-values
+comparisons <- strsplit(dunn_res$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_res$P.adjusted
+)
+
+# Only significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+
+df_10_big_JSS$state <- factor(df_10_big_JSS$state, levels = unique(df_10_big_JSS$state))
+levels <- levels(df_10_big_JSS$state)
+
+# Names to position numbers
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Positions to labels
+df_sig$y.position <- seq(max(df_10_big_JSS$evenness, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  # 
+)
+
+```
+

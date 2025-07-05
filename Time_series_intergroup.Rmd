@@ -1,0 +1,1896 @@
+---
+title: "Pruebas intergrupo"
+author: "J. Ángel Sayáns Crespo"
+date: '2025-06-13'
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+In this R Markdown document, we will perform the inter-group distribution analyses of the time series.
+
+# Library
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(ggplot2)
+library(car)
+library(dunn.test)
+library(ggpubr)
+library(forcats)
+
+```
+
+
+# Load JxSS means:
+
+```{r}
+load("JSS_list_means.RData")
+
+# To data frame
+
+df_JSS <- do.call(rbind, lapply(seq_along(JSS_list_means), function(i) {
+  sample_id <- names(JSS_list_means)[i]
+  values <- as.vector(JSS_list_means[[i]])
+  
+  # Split sample name
+  pieces <- unlist(str_split(sample_id, "_"))
+  if (length(pieces) < 3) {
+    pieces <- c(pieces, rep(NA, 3 - length(pieces)))
+  }
+
+  data.frame(
+    subject = pieces[1],
+    condition = as.factor(pieces[2]),
+    session = pieces[3],
+    sample = sample_id,
+    time = seq_along(values),
+    value = values
+  )
+}))
+
+head(df_JSS)
+# write.csv2(df_JSS, file = "df_JSS.csv")
+```
+
+## Normality
+
+At first, given the low number of subjects, a Shapiro-Wilk test would be appropriate. However, since all values across the time interval and all samples per subject are considered, the data volume increases substantially, so the Kolmogorov-Smirnov test was selected instead.
+
+```{r}
+conditions <- unique(df_JSS$condition)
+
+for (cond in conditions) {
+  cat("\n--- Condition:", cond, "---\n")
+  subset_vals <- df_JSS$value[df_JSS$condition == cond]
+  ks_res <- ks.test(subset_vals, "pnorm", mean(subset_vals), sd(subset_vals))
+  print(ks_res)
+}
+```
+
+In these case, we can observe that Shapiro-wilk test and Kolmogorov-Smirnov test have the same results.
+
+```{r}
+conditions = unique(df_JSS$condition)
+
+for (cond in conditions) {
+ cat("\n--- Condition:", cond, "---\n")
+  subset_vals <- df_JSS$value[df_JSS$condition == cond]
+  ks_res <- shapiro.test(subset_vals)
+  print(ks_res)
+}
+```
+
+Any condiction has a normal distribution.
+
+Graphical verification
+
+```{r}
+
+# Histogram
+ggplot(df_JSS, aes(x = value)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ condition, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram JSS_means by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_JSS, aes(sample = value)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ condition, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot by Condition", x = "Theorical", y = "Samples")
+
+```
+
+We can observe that the distribution is not normal
+
+## Homocedasticity
+
+Regarding the analysis of variance equality, Levene’s test was applied.
+
+```{r}
+leveneTest(value ~ condition, data = df_JSS)
+```
+
+The p-value is < 0.001, so we can assume that there are significant differences.
+
+## Analysis
+
+Since the distributions are not normal and the variances are unequal, a non-parametric test is required. If more than two groups are being compared, the Kruskal-Wallis test is appropriate. For two groups, we would use the Wilcoxon signed-rank test (for paired samples) or the Mann-Whitney U test (for independent samples, wich could be our case). 
+
+```{r}
+kruskal.test(value ~ condition, data = df_JSS)
+```
+
+The p-value is well below 0.001, indicating that at least two conditions show significant differences in their distributions. To determine which pairs differ significantly, we will perform a Dunn’s test.
+
+```{r}
+dunn_JSS = dunn.test(df_JSS$value, df_JSS$condition, method = "BH", kw = FALSE)
+```
+
+We observe that the only states that do not show significant differences are 'xenon' and 'swsleep'.
+
+## Visualization
+
+```{r}
+# Plot
+p <- ggplot(df_JSS, aes(x = condition, y = value, fill = condition)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Model JSS means",
+       x = "Condition", y = "value")
+p2 = ggplot(df_JSS, aes(x = condition, y = value, fill = condition)) +
+  geom_violin(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Model JSS means",
+       x = "Condition", y = "value")
+
+comparisons <- strsplit(dunn_JSS$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_JSS$P.adjusted
+)
+
+# Filter significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+# Column of significants
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+# Ensure factor order
+df_JSS$condition <- factor(df_JSS$condition, levels = unique(df_JSS$condition))
+levels <- levels(df_JSS$condition)
+
+# Conditions to numeric position
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Vertical postions for labels
+df_sig$y.position <- seq(max(df_JSS$value, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  
+)
+p2 + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  
+)
+```
+
+
+# Load JxSS standard deviations:
+
+```{r}
+load("JSS_list_sd.RData")
+
+# Example
+names(JSS_list_sd)[1]
+
+# To data frame
+
+df_JSS_sd <- do.call(rbind, lapply(seq_along(JSS_list_sd), function(i) {
+  sample_id <- names(JSS_list_sd)[i]
+  values <- as.vector(JSS_list_sd[[i]])
+  
+  # Split sample name 
+  
+  pieces <- unlist(str_split(sample_id, "_"))
+
+  if (length(pieces) < 3) {
+    pieces <- c(pieces, rep(NA, 3 - length(pieces)))  
+  }
+
+  data.frame(
+    subject = pieces[1],
+    condition = as.factor(pieces[2]),
+    session = pieces[3],
+    sample = sample_id,
+    time = seq_along(values),
+    value = values
+  )
+}))
+
+# Check result
+head(df_JSS_sd)
+# write.csv2(df_JSS_sd, file = "df_JSS_sd.csv")
+```
+
+## Normalization
+
+```{r}
+conditions = unique(df_JSS_sd$condition)
+
+for (cond in conditions) {
+ cat("\n--- Condition:", cond, "---\n")
+  subset_vals <- df_JSS_sd$value[df_JSS_sd$condition == cond]
+  ks_res <- ks.test(subset_vals, "pnorm", mean(subset_vals), sd(subset_vals))
+  print(ks_res)
+}
+```
+
+No normality
+
+Visualization:
+
+```{r}
+
+# Histogram
+ggplot(df_JSS_sd, aes(x = value)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ condition, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram JSS_sd by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_JSS_sd, aes(sample = value)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ condition, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot by Condition", x = "Theorical", y = "Samples")
+
+```
+
+## Homocedasticity
+
+```{r}
+leveneTest(value ~ condition, data = df_JSS_sd)
+```
+
+The p-value is at the threshold of significance (0.051), so we cannot conclude that there are significant differences in the data variance, although it is very close.
+
+## Analysis
+
+```{r}
+kruskal.test(value ~ condition, data = df_JSS_sd)
+```
+
+```{r}
+
+dunn_JSS_sd = dunn.test(df_JSS_sd$value, df_JSS_sd$condition, method = "BH", kw = FALSE)
+```
+
+## Visualization
+
+```{r}
+
+# Plot
+p <- ggplot(df_JSS_sd, aes(x = condition, y = value, fill = condition)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Model JSS sd",
+       x = "Condition", y = "value")
+
+
+comparisons <- strsplit(dunn_JSS_sd$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_JSS_sd$P.adjusted
+)
+
+# Filter significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+# Column of significants
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+# Ensure factor order
+df_JSS_sd$condition <- factor(df_JSS_sd$condition, levels = unique(df_JSS_sd$condition))
+levels <- levels(df_JSS_sd$condition)
+
+# Conditions to numeric position
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Vertical postions for labels
+df_sig$y.position <- seq(max(df_JSS_sd$value, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  
+)
+
+```
+
+# Load J means:
+
+```{r}
+load("current_means.RData")
+
+# Example
+names(current_means)[1]
+
+# To data frame
+
+df_J <- do.call(rbind, lapply(seq_along(current_means), function(i) {
+  sample_id <- names(current_means)[i]
+  values <- as.vector(current_means[[i]])
+  
+  # Split sample name 
+  
+  pieces <- unlist(str_split(sample_id, "_"))
+
+  
+  if (length(pieces) < 3) {
+    pieces <- c(pieces, rep(NA, 3 - length(pieces)))  
+  }
+
+  data.frame(
+    subject = pieces[1],
+    condition = as.factor(pieces[2]),
+    session = pieces[3],
+    sample = sample_id,
+    time = seq_along(values),
+    value = values
+  )
+}))
+
+# Check result
+head(df_J)
+# write.csv2(df_J, file = "df_J.csv")
+```
+
+## Normality
+
+
+
+```{r}
+conditions = unique(df_J$condition)
+
+for (cond in conditions) {
+ cat("\n--- Condition:", cond, "---\n")
+  subset_vals <- df_J$value[df_J$condition == cond]
+  ks_res <- ks.test(subset_vals,"pnorm", mean(subset_vals), sd(subset_vals))
+  print(ks_res)
+}
+```
+
+No normality
+
+Visualization:
+
+```{r}
+# Histogram
+ggplot(df_J, aes(x = value)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ condition, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram J_means by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_J, aes(sample = value)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ condition, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot by Condition", x = "Theorical", y = "Samples")
+
+```
+
+## Homocedasticity
+
+```{r}
+leveneTest(value ~ condition, data = df_J)
+```
+
+## Analysis
+
+```{r}
+kruskal.test(value ~ condition, data = df_J)
+```
+
+
+
+```{r}
+dunn_J = dunn.test(df_J$value, df_J$condition, method = "BH", kw = FALSE)
+```
+
+## Visualization
+
+```{r}
+
+# Plot
+p <- ggplot(df_J, aes(x = condition, y = value, fill = condition)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Model J means",
+       x = "Condition", y = "value")
+
+
+comparisons <- strsplit(dunn_J$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_J$P.adjusted
+)
+
+# Filter significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+# Column of significants
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+# Ensure factor order
+df_J$condition <- factor(df_J$condition, levels = unique(df_J$condition))
+levels <- levels(df_J$condition)
+
+# Conditions to numeric position
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Vertical postions for labels
+df_sig$y.position <- seq(max(df_J$value, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  
+)
+
+```
+
+# Load J standard deviations:
+
+```{r}
+load("current_sd.RData")
+
+# Example
+names(current_sd)[1]
+
+# To data frame
+
+df_J_sd <- do.call(rbind, lapply(seq_along(current_sd), function(i) {
+  sample_id <- names(current_sd)[i]
+  values <- as.vector(current_sd[[i]])
+  
+  # Split sample name 
+  
+  pieces <- unlist(str_split(sample_id, "_"))
+
+  
+  if (length(pieces) < 3) {
+    pieces <- c(pieces, rep(NA, 3 - length(pieces)))  
+  }
+
+  data.frame(
+    subject = pieces[1],
+    condition = as.factor(pieces[2]),
+    session = pieces[3],
+    sample = sample_id,
+    time = seq_along(values),
+    value = values
+  )
+}))
+
+# Check result
+head(df_J_sd)
+# write.csv2(df_J_sd, file = "df_J_sd.csv")
+```
+
+## Normality
+
+```{r}
+conditions = unique(df_J_sd$condition)
+
+for (cond in conditions) {
+ cat("\n--- Condition:", cond, "---\n")
+  subset_vals <- df_J_sd$value[df_J_sd$condition == cond]
+  ks_res <- ks.test(subset_vals, "pnorm", mean(subset_vals), sd(subset_vals))
+  print(ks_res)
+}
+```
+
+No normality
+
+Visualization:
+
+```{r}
+# Histogram
+ggplot(df_J_sd, aes(x = value)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ condition, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram J_sd by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_J_sd, aes(sample = value)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ condition, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot by Condition", x = "Theorical", y = "Samples")
+
+```
+
+## Homocedasticity
+
+```{r}
+leveneTest(value ~ condition, data = df_J_sd)
+```
+
+There are significant differences
+
+## Analysis
+
+```{r}
+kruskal.test(value ~ condition, data = df_J_sd)
+```
+
+```{r}
+dunn_J_sd = dunn.test(df_J_sd$value, df_J_sd$condition, method = "BH", kw = FALSE)
+```
+
+## Visualization
+
+```{r}
+# Plot
+p <- ggplot(df_J_sd, aes(x = condition, y = value, fill = condition)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Model J sd",
+       x = "Condition", y = "value")
+
+comparisons <- strsplit(dunn_J_sd$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_J_sd$P.adjusted
+)
+
+# Filter significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+# Column of significants
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+# Ensure factor order
+df_J_sd$condition <- factor(df_J_sd$condition, levels = unique(df_J_sd$condition))
+levels <- levels(df_J_sd$condition)
+
+# Conditions to numeric position
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Vertical postions for labels
+df_sig$y.position <- seq(max(df_J_sd$value, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  
+)
+
+```
+
+# Load SS means:
+
+```{r}
+load("ss_means.RData")
+
+# Example
+names(ss_means)[1]
+
+# To data frame
+df_SS <- do.call(rbind, lapply(seq_along(ss_means), function(i) {
+  sample_id <- names(ss_means)[i]
+  values <- as.vector(ss_means[[i]])
+  
+  # Split sample name 
+  
+  pieces <- unlist(str_split(sample_id, "_"))
+
+  
+  if (length(pieces) < 3) {
+    pieces <- c(pieces, rep(NA, 3 - length(pieces)))  
+  }
+
+  data.frame(
+    subject = pieces[1],
+    condition = as.factor(pieces[2]),
+    session = pieces[3],
+    sample = sample_id,
+    time = seq_along(values),
+    value = values
+  )
+}))
+
+# Check result
+head(df_SS)
+# write.csv2(df_SS, file = "df_SS.csv")
+```
+
+## Normality
+
+```{r}
+conditions = unique(df_SS$condition)
+
+for (cond in conditions) {
+ cat("\n--- Condition:", cond, "---\n")
+  subset_vals <- df_SS$value[df_SS$condition == cond]
+  ks_res <- ks.test(subset_vals, "pnorm", mean(subset_vals), sd(subset_vals))
+  print(ks_res)
+}
+```
+
+No normality
+
+Visualization:
+
+```{r}
+
+# Histogram
+ggplot(df_SS, aes(x = value)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ condition, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram SS_means by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_SS, aes(sample = value)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ condition, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot by Condition", x = "Theorical", y = "Samples")
+
+```
+
+## Homocedasticity
+
+```{r}
+leveneTest(value ~ condition, data = df_SS)
+```
+
+## Analysis
+
+```{r}
+kruskal.test(value ~ condition, data = df_SS)
+```
+
+```{r}
+dunn_SS = dunn.test(df_SS$value, df_SS$condition, method = "BH", kw = FALSE)
+```
+
+## Visualization
+
+```{r}
+
+# Plot
+p <- ggplot(df_SS, aes(x = condition, y = value, fill = condition)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Model SS means",
+       x = "Condition", y = "value")
+
+
+comparisons <- strsplit(dunn_SS$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_SS$P.adjusted
+)
+
+# Filter significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+# Column of significants
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+# Ensure factor order
+df_SS$condition <- factor(df_SS$condition, levels = unique(df_SS$condition))
+levels <- levels(df_SS$condition)
+
+# Conditions to numeric position
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Vertical postions for labels
+df_sig$y.position <- seq(max(df_SS$value, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  
+)
+
+```
+
+# Load SS standard defviations:
+
+```{r}
+load("ss_sd.RData")
+
+# Example
+names(ss_sd)[1]
+
+# To data frame
+
+df_SS_sd <- do.call(rbind, lapply(seq_along(ss_sd), function(i) {
+  sample_id <- names(ss_sd)[i]
+  values <- as.vector(ss_sd[[i]])
+  
+  # Split sample name 
+  
+  pieces <- unlist(str_split(sample_id, "_"))
+
+  
+  if (length(pieces) < 3) {
+    pieces <- c(pieces, rep(NA, 3 - length(pieces)))  
+  }
+
+  data.frame(
+    subject = pieces[1],
+    condition = as.factor(pieces[2]),
+    session = pieces[3],
+    sample = sample_id,
+    time = seq_along(values),
+    value = values
+  )
+}))
+
+# Check result
+head(df_SS_sd)
+# write.csv2(df_SS_sd, file = "df_SS_sd.csv")
+```
+
+## Normality
+
+```{r}
+conditions = unique(df_SS_sd$condition)
+
+for (cond in conditions) {
+ cat("\n--- Condition:", cond, "---\n")
+  subset_vals <- df_SS_sd$value[df_SS_sd$condition == cond]
+  ks_res <- ks.test(subset_vals,  "pnorm", mean(subset_vals), sd(subset_vals))
+  print(ks_res)
+}
+```
+
+No normality 
+
+Visualization:
+
+```{r}
+
+# Histogram
+ggplot(df_SS_sd, aes(x = value)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ condition, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram SS_means by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_SS_sd, aes(sample = value)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ condition, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot by Condition", x = "Theorical", y = "Samples")
+
+```
+
+## Homocedasticity
+
+```{r}
+leveneTest(value ~ condition, data = df_SS_sd)
+```
+
+## Analysis
+
+```{r}
+kruskal.test(value ~ condition, data = df_SS_sd)
+```
+```{r}
+
+dunn_SS_sd = dunn.test(df_SS_sd$value, df_SS_sd$condition, method = "BH", kw = FALSE)
+```
+
+## Visualization
+
+```{r}
+
+# Plot
+p <- ggplot(df_SS_sd, aes(x = condition, y = value, fill = condition)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Model SS means",
+       x = "Condition", y = "value")
+
+
+comparisons <- strsplit(dunn_SS_sd$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_SS_sd$P.adjusted
+)
+
+# Filter significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+# Column of significants
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+# Ensure factor order
+df_SS_sd$condition <- factor(df_SS_sd$condition, levels = unique(df_SS_sd$condition))
+levels <- levels(df_SS_sd$condition)
+
+# Conditions to numeric position
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Vertical postions for labels
+df_sig$y.position <- seq(max(df_SS_sd$value, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  
+)
+
+```
+
+# Load JxSS means for full time range:
+
+```{r}
+load("JSS_list_t_means.RData")
+
+# Example
+names(JSS_list_t_means)[1]
+
+# To data frame
+
+df_JSS_t <- do.call(rbind, lapply(seq_along(JSS_list_t_means), function(i) {
+  sample_id <- names(JSS_list_t_means)[i]
+  values <- as.vector(JSS_list_t_means[[i]])
+  
+  # Split sample name 
+  
+  pieces <- unlist(str_split(sample_id, "_"))
+
+  
+  if (length(pieces) < 3) {
+    pieces <- c(pieces, rep(NA, 3 - length(pieces)))  
+  }
+
+  data.frame(
+    subject = pieces[1],
+    condition = as.factor(pieces[2]),
+    session = pieces[3],
+    sample = sample_id,
+    time = seq_along(values),
+    value = values
+  )
+}))
+
+# Check result
+head(df_JSS_t)
+# write.csv2(df_JSS_t, file = "df_JSS_t.csv")
+```
+
+## Normality
+
+
+
+```{r}
+conditions <- unique(df_JSS_t$condition)
+
+for (cond in conditions) {
+  cat("\n--- Condition:", cond, "---\n")
+  subset_vals <- df_JSS_t$value[df_JSS_t$condition == cond]
+  ks_res <- ks.test(subset_vals, "pnorm", mean(subset_vals), sd(subset_vals))
+  print(ks_res)
+}
+
+```
+
+Visualization:
+
+```{r}
+
+# Histogram
+ggplot(df_JSS_t, aes(x = value)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ condition, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram SS_sd by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_JSS_t, aes(sample = value)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ condition, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot by Condition", x = "Theorical", y = "Samples")
+
+```
+
+## Homocedasticity
+
+```{r}
+leveneTest(value ~ condition, data = df_JSS_t)
+```
+
+## Analysis
+
+```{r}
+kruskal.test(value ~ condition, data = df_JSS_t)
+```
+
+```{r}
+dunn_JSS_t = dunn.test(df_JSS_t$value, df_JSS_t$condition, method = "BH", kw = FALSE)
+```
+
+## Visualization
+
+```{r}
+
+# Plot
+p <- ggplot(df_JSS_t, aes(x = condition, y = value, fill = condition)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Model JSS t means",
+       x = "Condition", y = "value")
+
+
+comparisons <- strsplit(dunn_JSS_t$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_JSS_t$P.adjusted
+)
+
+# Filter significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+# Column of significants
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+# Ensure factor order
+df_JSS_t$condition <- factor(df_JSS_t$condition, levels = unique(df_JSS_t$condition))
+levels <- levels(df_JSS_t$condition)
+
+# Conditions to numeric position
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Vertical postions for labels
+df_sig$y.position <- seq(max(df_JSS_t$value, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  
+)
+
+```
+
+# Load JxSS standard deviations for full time range:
+
+```{r}
+load("JSS_list_t_sd.RData")
+
+# Example
+names(JSS_list_t_sd)[1]
+
+# To data frame
+
+df_JSS_t_sd <- do.call(rbind, lapply(seq_along(JSS_list_t_sd), function(i) {
+  sample_id <- names(JSS_list_t_sd)[i]
+  values <- as.vector(JSS_list_t_sd[[i]])
+  
+  # Split sample name 
+  
+  pieces <- unlist(str_split(sample_id, "_"))
+
+  
+  if (length(pieces) < 3) {
+    pieces <- c(pieces, rep(NA, 3 - length(pieces)))  
+  }
+
+  data.frame(
+    subject = pieces[1],
+    condition = as.factor(pieces[2]),
+    session = pieces[3],
+    sample = sample_id,
+    time = seq_along(values),
+    value = values
+  )
+}))
+
+# Check result
+head(df_JSS_t_sd)
+# write.csv2(df_JSS_t_sd, file = "df_JSS_t_sd.csv")
+```
+
+## Normality
+
+```{r}
+conditions <- unique(df_JSS_t_sd$condition)
+
+for (cond in conditions) {
+  cat("\n--- Condition:", cond, "---\n")
+  subset_vals <- df_JSS_t_sd$value[df_JSS_t_sd$condition == cond]
+  ks_res <- ks.test(subset_vals, "pnorm", mean(subset_vals), sd(subset_vals))
+  print(ks_res)
+}
+
+```
+
+No normality
+
+Visualization:
+
+```{r}
+
+# Histogram
+ggplot(df_JSS_t_sd, aes(x = value)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ condition, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram JSS_t_sd by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_JSS_t_sd, aes(sample = value)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ condition, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot by Condition", x = "Theorical", y = "Samples")
+
+```
+
+
+
+## Homocedasticity
+
+```{r}
+leveneTest(value ~ condition, data = df_JSS_t_sd)
+```
+
+## Analysis
+
+```{r}
+kruskal.test(value ~ condition, data = df_JSS_t_sd)
+```
+
+```{r}
+dunn_JSS_t_sd = dunn.test(df_JSS_t_sd$value, df_JSS_t_sd$condition, method = "BH", kw = FALSE)
+```
+
+## Visualization
+
+```{r}
+
+# Plot
+p <- ggplot(df_JSS_t_sd, aes(x = condition, y = value, fill = condition)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Model JSS t sd",
+       x = "Condition", y = "value")
+
+
+comparisons <- strsplit(dunn_JSS_t_sd$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_JSS_t_sd$P.adjusted
+)
+
+# Filter significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+# Column of significants
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+# Ensure factor order
+df_JSS_t_sd$condition <- factor(df_JSS_t_sd$condition, levels = unique(df_JSS_t_sd$condition))
+levels <- levels(df_JSS_t_sd$condition)
+
+# Conditions to numeric position
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Vertical postions for labels
+df_sig$y.position <- seq(max(df_JSS_t_sd$value, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  
+)
+
+```
+
+# Load J means for full time range:
+
+```{r}
+load("current_means_J_t.RData")
+
+# Example
+names(current_means_J_t)[1]
+
+# To data frame
+
+df_J_t <- do.call(rbind, lapply(seq_along(current_means_J_t), function(i) {
+  sample_id <- names(current_means_J_t)[i]
+  values <- as.vector(current_means_J_t[[i]])
+  
+  # Split sample name 
+  
+  pieces <- unlist(str_split(sample_id, "_"))
+
+  
+  if (length(pieces) < 3) {
+    pieces <- c(pieces, rep(NA, 3 - length(pieces)))  
+  }
+
+  data.frame(
+    subject = pieces[1],
+    condition = as.factor(pieces[2]),
+    session = pieces[3],
+    sample = sample_id,
+    time = seq_along(values),
+    value = values
+  )
+}))
+
+# Check result
+head(df_J_t)
+# write.csv2(df_J_t, file = "df_J_t.csv")
+```
+
+## Normality
+
+```{r}
+conditions <- unique(df_J_t$condition)
+
+for (cond in conditions) {
+  cat("\n--- Condition:", cond, "---\n")
+  subset_vals <- df_J_t$value[df_J_t$condition == cond]
+  ks_res <- ks.test(subset_vals, "pnorm", mean(subset_vals), sd(subset_vals))
+  print(ks_res)
+}
+
+```
+
+No normality
+
+Visualization:
+
+```{r}
+
+# Histogram
+ggplot(df_J_t, aes(x = value)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ condition, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram J_t_means by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_J_t, aes(sample = value)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ condition, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot by Condition", x = "Theorical", y = "Samples")
+
+```
+
+
+
+## Homocedasticity
+
+```{r}
+leveneTest(value ~ condition, data = df_J_t)
+```
+
+No normality
+
+## Analysis
+
+```{r}
+kruskal.test(value ~ condition, data = df_J_t)
+```
+
+```{r}
+dunn_J_t = dunn.test(df_J_t$value, df_J_t$condition, method = "BH", kw = FALSE)
+```
+
+## Visualization
+
+```{r}
+
+# Plot
+p <- ggplot(df_J_t, aes(x = condition, y = value, fill = condition)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Model J t means",
+       x = "Condition", y = "value")
+
+
+comparisons <- strsplit(dunn_J_t$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_J_t$P.adjusted
+)
+
+# Filter significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+# Column of significants
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+# Ensure factor order
+df_J_t$condition <- factor(df_J_t$condition, levels = unique(df_J_t$condition))
+levels <- levels(df_J_t$condition)
+
+# Conditions to numeric position
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Vertical postions for labels
+df_sig$y.position <- seq(max(df_J_t$value, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  
+)
+
+```
+
+# Load J standard deviations for full time range:
+
+```{r}
+load("current_J_t_sd.RData")
+
+# Example
+names(current_J_t_sd)[1]
+
+# To data frame
+
+df_J_t_sd <- do.call(rbind, lapply(seq_along(current_J_t_sd), function(i) {
+  sample_id <- names(current_J_t_sd)[i]
+  values <- as.vector(current_J_t_sd[[i]])
+  
+  # Split sample name 
+  
+  pieces <- unlist(str_split(sample_id, "_"))
+
+  
+  if (length(pieces) < 3) {
+    pieces <- c(pieces, rep(NA, 3 - length(pieces)))  
+  }
+
+  data.frame(
+    subject = pieces[1],
+    condition = as.factor(pieces[2]),
+    session = pieces[3],
+    sample = sample_id,
+    time = seq_along(values),
+    value = values
+  )
+}))
+
+# Check result
+head(df_J_t_sd)
+# write.csv2(df_J_t_sd, file = "df_J_t_sd.csv")
+```
+
+## Normality
+
+
+
+```{r}
+conditions <- unique(df_J_t_sd$condition)
+
+for (cond in conditions) {
+  cat("\n--- Condition:", cond, "---\n")
+  subset_vals <- df_J_t_sd$value[df_J_t_sd$condition == cond]
+  ks_res <- ks.test(subset_vals, "pnorm", mean(subset_vals), sd(subset_vals))
+  print(ks_res)
+}
+
+```
+
+No normality
+
+Visualization:
+
+```{r}
+
+# Histogram
+ggplot(df_J_t_sd, aes(x = value)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ condition, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram J_t_sd by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_J_t_sd, aes(sample = value)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ condition, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot by Condition", x = "Theorical", y = "Samples")
+
+```
+
+
+## Homocedasticity
+
+```{r}
+leveneTest(value ~ condition, data = df_J_t_sd)
+```
+
+## Analysis
+
+```{r}
+kruskal.test(value ~ condition, data = df_J_t_sd)
+```
+
+```{r}
+
+dunn_J_t_sd = dunn.test(df_J_t_sd$value, df_J_t_sd$condition, method = "BH", kw = FALSE)
+```
+
+## Visualization
+
+```{r}
+# Plot
+p <- ggplot(df_J_t_sd, aes(x = condition, y = value, fill = condition)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Model J t sd",
+       x = "Condition", y = "value")
+
+
+comparisons <- strsplit(dunn_J_t_sd$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_J_t_sd$P.adjusted
+)
+
+# Filter significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+# Column of significants
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+# Ensure factor order
+df_J_t_sd$condition <- factor(df_J_t_sd$condition, levels = unique(df_J_t_sd$condition))
+levels <- levels(df_J_t_sd$condition)
+
+# Conditions to numeric position
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Vertical postions for labels
+df_sig$y.position <- seq(max(df_J_t_sd$value, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  
+)
+
+```
+
+# Load SS means for full time range:
+
+```{r}
+load("ss_t_means.RData")
+
+# Example
+names(ss_t_means)[1]
+
+# To data frame
+
+df_SS_t <- do.call(rbind, lapply(seq_along(ss_t_means), function(i) {
+  sample_id <- names(ss_t_means)[i]
+  values <- as.vector(ss_t_means[[i]])
+  
+  # Split sample name 
+  
+  pieces <- unlist(str_split(sample_id, "_"))
+
+  
+  if (length(pieces) < 3) {
+    pieces <- c(pieces, rep(NA, 3 - length(pieces)))  
+  }
+
+  data.frame(
+    subject = pieces[1],
+    condition = as.factor(pieces[2]),
+    session = pieces[3],
+    sample = sample_id,
+    time = seq_along(values),
+    value = values
+  )
+}))
+
+# Check result
+head(df_SS_t)
+# write.csv2(df_SS_t, file = "df_SS_t.csv")
+```
+
+## Normality
+
+
+
+```{r}
+conditions <- unique(df_SS_t$condition)
+
+for (cond in conditions) {
+  cat("\n--- Condition:", cond, "---\n")
+  subset_vals <- df_SS_t$value[df_SS_t$condition == cond]
+  ks_res <- ks.test(subset_vals, "pnorm", mean(subset_vals), sd(subset_vals))
+  print(ks_res)
+}
+
+```
+
+Visualization:
+
+```{r}
+
+# Histogram
+ggplot(df_SS_t, aes(x = value)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ condition, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram SS_t_means by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_SS_t, aes(sample = value)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ condition, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot by Condition", x = "Theorical", y = "Samples")
+
+```
+
+## Homocedasticity
+
+```{r}
+leveneTest(value ~ condition, data = df_SS_t)
+```
+
+## Analysis
+
+```{r}
+kruskal.test(value ~ condition, data = df_SS_t)
+```
+
+```{r}
+dunn_SS_t = dunn.test(df_SS_t$value, df_SS_t$condition, method = "BH", kw = FALSE)
+```
+
+## Visualization
+
+```{r}
+
+# Plot
+p <- ggplot(df_SS_t, aes(x = condition, y = value, fill = condition)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Model SS t means",
+       x = "Condition", y = "value")
+
+
+comparisons <- strsplit(dunn_SS_t$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_SS_t$P.adjusted
+)
+
+# Filter significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+# Column of significants
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+# Ensure factor order
+df_SS_t$condition <- factor(df_SS_t$condition, levels = unique(df_SS_t$condition))
+levels <- levels(df_SS_t$condition)
+
+# Conditions to numeric position
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Vertical postions for labels
+df_sig$y.position <- seq(max(df_SS_t$value, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  
+)
+
+```
+
+# Load SS standard deviations for full time range:
+
+```{r}
+load("ss_t_sd.RData")
+
+# Example
+names(ss_t_sd)[1]
+
+# To data frame
+
+df_SS_t_sd <- do.call(rbind, lapply(seq_along(ss_t_sd), function(i) {
+  sample_id <- names(ss_t_sd)[i]
+  values <- as.vector(ss_t_sd[[i]])
+  
+  # Split sample name 
+  
+  pieces <- unlist(str_split(sample_id, "_"))
+
+  
+  if (length(pieces) < 3) {
+    pieces <- c(pieces, rep(NA, 3 - length(pieces)))  
+  }
+
+  data.frame(
+    subject = pieces[1],
+    condition = as.factor(pieces[2]),
+    session = pieces[3],
+    sample = sample_id,
+    time = seq_along(values),
+    value = values
+  )
+}))
+
+# Check result
+head(df_SS_t_sd)
+# write.csv2(df_SS_t_sd, file = "df_SS_t_sd.csv")
+```
+
+## Normality
+
+```{r}
+conditions <- unique(df_SS_t_sd$condition)
+
+for (cond in conditions) {
+  cat("\n--- Condition:", cond, "---\n")
+  subset_vals <- df_SS_t_sd$value[df_SS_t_sd$condition == cond]
+  ks_res <- ks.test(subset_vals, "pnorm", mean(subset_vals), sd(subset_vals))
+  print(ks_res)
+}
+
+```
+
+Visualization:
+
+```{r}
+
+# Histogram
+ggplot(df_SS_t_sd, aes(x = value)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ condition, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histogram SS_t_sd by condition", x = "Value", y = "Frecuency")
+
+# QQ-plot
+ggplot(df_SS_t_sd, aes(sample = value)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  facet_wrap(~ condition, scales = "free") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot by Condition", x = "Theorical", y = "Samples")
+
+```
+
+## Homocedasticity
+
+```{r}
+leveneTest(value ~ condition, data = df_SS_t_sd)
+```
+
+## Analysis
+
+```{r}
+kruskal.test(value ~ condition, data = df_SS_t_sd)
+```
+
+```{r}
+dunn_SS_t_sd = dunn.test(df_SS_t_sd$value, df_SS_t_sd$condition, method = "BH", kw = FALSE)
+```
+
+## Visualization
+
+```{r}
+
+# Plot
+p <- ggplot(df_SS_t_sd, aes(x = condition, y = value, fill = condition)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Model SS t sd",
+       x = "Condition", y = "value")
+
+
+comparisons <- strsplit(dunn_SS_t_sd$comparisons, " - ")
+df_dunn <- data.frame(
+  group1 = sapply(comparisons, `[`, 1),
+  group2 = sapply(comparisons, `[`, 2),
+  p.adj = dunn_SS_t_sd$P.adjusted
+)
+
+# Filter significants
+df_sig <- subset(df_dunn, p.adj < 0.05)
+
+# Column of significants
+df_sig$p.signif <- cut(df_sig$p.adj,
+                       breaks = c(0, 0.001, 0.01, 0.05, 1),
+                       labels = c("***", "**", "*", "ns"),
+                       right = FALSE)
+
+# Ensure factor order
+df_SS_t_sd$condition <- factor(df_SS_t_sd$condition, levels = unique(df_SS_t_sd$condition))
+levels <- levels(df_SS_t_sd$condition)
+
+# Conditions to numeric position
+df_sig$xmin <- match(df_sig$group1, levels)
+df_sig$xmax <- match(df_sig$group2, levels)
+
+# Vertical postions for labels
+df_sig$y.position <- seq(max(df_SS_t_sd$value, na.rm = TRUE) * 1.05,
+                         length.out = nrow(df_sig), by = 0.5)
+
+
+p + stat_pvalue_manual(
+  data = df_sig,
+  label = "p.signif",
+  xmin = "xmin",
+  xmax = "xmax",
+  y.position = "y.position",
+  tip.length = 0.01,
+  inherit.aes = FALSE  
+)
+
+```
+
+## All Dunn test results are compared in terms of significance.
+
+```{r}
+# Función para convertir dunn.test() en df_dunn
+dunn_to_df <- function(dunn_res, nombre_variable) {
+  comparisons <- strsplit(dunn_res$comparisons, " - ")
+  df <- data.frame(
+    group1 = sapply(comparisons, `[`, 1),
+    group2 = sapply(comparisons, `[`, 2),
+    p.adj = dunn_res$P.adjusted
+  )
+  df$variable <- nombre_variable
+  return(df)
+}
+df_dunn_JSS        <- dunn_to_df(dunn_JSS, "JxSS mean")
+df_dunn_JSS_sd     <- dunn_to_df(dunn_JSS_sd, "JxSS sd")
+df_dunn_J          <- dunn_to_df(dunn_J, "J mean")
+df_dunn_J_sd       <- dunn_to_df(dunn_J_sd, "J sd")
+df_dunn_SS         <- dunn_to_df(dunn_SS, "SS mean")
+df_dunn_SS_sd      <- dunn_to_df(dunn_SS_sd, "SS sd")
+df_dunn_JSS_t      <- dunn_to_df(dunn_JSS_t, "JxSS mean t")
+df_dunn_JSS_t_sd   <- dunn_to_df(dunn_JSS_t_sd, "JxSS sd t")
+df_dunn_J_t        <- dunn_to_df(dunn_J_t, "J mean t")
+df_dunn_J_t_sd     <- dunn_to_df(dunn_J_t_sd, "J sd t")
+df_dunn_SS_t       <- dunn_to_df(dunn_SS_t, "SS mean t")
+df_dunn_SS_t_sd    <- dunn_to_df(dunn_SS_t_sd, "SS sd t")
+
+df_todos <- bind_rows(
+  df_dunn_JSS,
+  df_dunn_JSS_sd,
+  df_dunn_J,
+  df_dunn_J_sd,
+  df_dunn_SS,
+  df_dunn_SS_sd,
+  df_dunn_JSS_t,
+  df_dunn_JSS_t_sd,
+  df_dunn_J_t,
+  df_dunn_J_t_sd,
+  df_dunn_SS_t,
+  df_dunn_SS_t_sd
+)
+
+# Contar comparisons significativas by Condition y variable
+resumen_patrones <- df_todos %>%
+  filter(p.adj < 0.025) %>%
+  pivot_longer(cols = c(group1, group2), names_to = "rol", values_to = "condition") %>%
+  count(variable, condition, name = "n_significativas")
+
+# Organizar conditions y variables con orden deseado
+resumen_patrones <- resumen_patrones %>%
+  mutate(variable = fct_reorder(variable, n_significativas, .fun = max, .desc = TRUE),
+         condition = factor(condition, levels = c("wake", "swsleep", "sleep", "propofol", "xenon")))
+
+# Crear gráfico mejorado
+ggplot(resumen_patrones, aes(x = variable, y = n_significativas, fill = condition)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8), width = 0.7) +
+  scale_fill_brewer(palette = "Set2") +
+  labs(
+    title = "Frecuency de comparisons de Dunn significativas",
+    subtitle = "Distribuidas by variable y Condition",
+    x = "Variable analizada",
+    y = "Nº de comparisons significativas",
+    fill = "Condition"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text.x = element_text(angle = 40, hjust = 1),
+    legend.position = "right",
+    panel.grid.minor = element_blank()
+  )
+
+```
+
+
+
+

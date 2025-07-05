@@ -1,0 +1,849 @@
+---
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+# Analysis of PCI wake/sleep/anesthesia subjects by using Information Structures
+
+Estas son las pruebas que hice hace ya algunos meses. He organizado un
+poco el código, pero la próxima semana lo comentamos, porque algunas
+cosas están un poco mezcladas.
+
+## Setting parameters
+
+El parámetro "nClusters" es el número de clústers en que van a agruparse
+los datos de cada sujeto. Cuando más alto lo pongas, más tiempo va a
+tardar en computarse.
+
+El valor de 'windW' establece la ventana que se va a usar para estimar
+los parámetros de crecimiento intrínseco (las 'r' o 'b') en el modelo no
+autónomo.
+
+```{r}
+
+nClusters <- 5 # Con 7 muy bueno. Con 5 también. Interesante con 3, pasa algo parecido y se puede ver. 
+# Incluso con 2 se diferencia criticalidad. He probado con múltiples valores y oobtenian resultados similares. También he probado con la matriz JSS para k = 3 y 7,  hay resultados interesantes.
+
+windW <- 10 
+
+theSeed <- 20250506
+set.seed(theSeed)
+
+```
+
+## Reading files and building a table
+
+Esto sirve para crear una tabla 'sessionsTable' que recopila todos los
+datos con los que hay que trabajar. Puedes usar esa tabla para estudiar
+otras medidas. Las columnas indican sujeto, estado, sesión (porque a
+veces un mismo sujeto tiene varios registros), y rutas de ficheros con
+datos de corrientes (sources) y fuentes significativas (SS).
+
+Es muy importante ajustar 'basePath' para que se encuentren los
+ficheros. Usa el directorio donde los tengas.
+
+```{r}
+library(tidyverse)
+library(cluster)
+library(reticulate)
+library(reshape2)
+library(R.matlab)
+source("R/invasion_graph_main_functions-mod2.R")
+source("R/IGmeasures.R")
+source("R/ISbuild.R")
+source("R/ISgraph.R")
+source("R/ISmeasures.R")
+source("R/setParameters.R")
+
+basePath <- "C:/Users/angel/Desktop/Universidade/MADOBIS/TFM/SleepAnesthesia/"
+#filesLoc <- paste(py$basePath,'/',sep='')
+
+# Get the session number from the filname (para los sujetos 27-32)
+stringSession <- function(cadena) {
+  elementos <- strsplit(cadena, "_")[[1]] # divide el nombre del archivo en elementos separados por "_"
+  penultima_ocurrencia <- tail(elementos, 2)[1] # obtiene el penúltimmo elemento, que es el número de la sesión del paciente
+  return(penultima_ocurrencia)
+}
+
+getAllSessions <- function(subj, state){
+  patron <- paste('Currents1_',state,'_.*_SS\\.mat', sep='') # genera un patron que se corresponde con el patrón de los nombres de los archivos mat, que empieze con "Currents1_", seguido del estado, que se define más adelante en el código, luego admite cualquier valor y debe terminar con _SS.mat
+  genPath <- paste(basePath,'subj', subj, '/', sep='') # genera el directorio donde buscar los archivos
+  archivos <- list.files(path = genPath, pattern = patron) # realiza una lista de los archivos que coinciden con el patrón y el directorio
+  as.vector(sapply(archivos, stringSession)) # aplica la función anterior para extraer la sesión de cada paciente.
+}
+
+sessionsTable <- data.frame( # genera la tabla donde se guradan los datos con los que trabajaremos, predefine el formato de las columnas.
+  subj=integer(), # numeros enteros
+  state=character(), # cadena de caracteres
+  session=character(),
+  currentsFile=character(),
+  ssFile=character()
+)
+for(subj in 9:14){ # para los primeros 6 pacientes, que solo tiene dos estados
+  states <- c("wake","sleep")
+  if(subj > 10){ # a partir del paciente 10 (no incluído)
+    states <- c("wake","sleep","swsleep") # hay tres estados posibles, se añade el swsleep, que es dormido pero a 160mV
+  }
+  for(state in states){
+    fileCurr <- paste(basePath,"Subj",subj,"/",state,"_Currents.mat",sep="") # rutas de los archivos "_Current"
+    fileSS <- paste(basePath,"Subj",subj,"/",state,"_SS.mat",sep="") # rutas de los archivos "_SS"
+    sessionsTable[nrow(sessionsTable)+1,] <- # añade nueva fila a la sessionsTable con el número del sujeto, el estado, sesión (se le adjudica 0 porque no tenemos esa información), ruta a current, ruta a SS.
+      c(subj,state,"0",fileCurr,fileSS) 
+  }
+}
+for(subj in 21:26){
+  states <- c("wake","xenon") # estados posibles, despierto y anestesia con xenon
+  for(state in states){
+    fileCurr <- paste(basePath,"subj",subj,"/Currents1_",state,".mat",sep="") # ruta a los "Currents1_" a secas
+    fileSS <- paste(basePath,"subj",subj,"/Currents1_",state,"_SS.mat",sep="") # ruta a los datos SS.
+    sessionsTable[nrow(sessionsTable)+1,] <- # añade fila con los mismos datos que en el anterior bucle
+      c(subj,state,"0", fileCurr, fileSS) 
+  }
+}
+for(subj in 27:32){
+  states <- c("wake","propofol") # anestesiados con propofol vs despiertos
+  for(state in states){
+    allSess <- getAllSessions(subj, state) # los nombres incluyen las sesiones, por lo que aplica la función previamente definida para extraer esa información
+    for(session in allSess){
+      fileCurr <-  paste(basePath,"subj",subj,"/Currents1_",state,"_",session,".mat",sep="") # rutas de Currents
+      fileSS <-  paste(basePath,"subj",subj,"/Currents1_",state,"_",session,"_SS.mat",sep="") # rutas de SS
+      sessionsTable[nrow(sessionsTable)+1,] <- # añade fila con la información correspondiente para todas las columnas predefinidas.
+        c(subj, state, session, fileCurr, fileSS)  
+    }
+  }
+}
+sessionsTable$subj <- as.numeric(sessionsTable$subj) # asegura que sean valores numéricos
+
+```
+
+# View parcellated brain and grouped timeseries
+
+Este código sirve para ver un cerebro coloreado según la agrupación
+automática que se realiza y la evolución de las series temporales
+resultantes. Salen por tanto dos gráficos.
+
+Estaría bien probar otras parcelaciones. Como ves, se usa 'kmeans', pero
+puedes cambiarlo para probar otras cosas. Mira cómo se cargan los datos,
+así puedes probar también otras medidas.
+
+```{r}
+
+library(plotly)
+
+
+fileN <- 22 # File to look at
+partSize <- nClusters  # puedes probar otro número de grupos. 
+
+commonColors <- c("#E057A8", "#BBDF93", "#E46A4F", "#76A0DA", "#8AE748",
+                   "#C8A478", "#CD979D", "#B548E3", "#DED557", "#739477", 
+                   "#6DDEC3", "#84C8CE")
+
+clusterRawMatrix <- function(rawMatrix, clInfo){ # matriz de datos y estructura de información de clusteres, kmeans, jerarquico...
+  clN <- length(clInfo$size) # número de clústeres
+  newMatrix <- matrix(0, nrow=clN, ncol = ncol(rawMatrix)) # nueva matriz vacía con filas como clústeres y columnas como columnas de la matriz raw
+  for(sp in 1:clN){ # recorre cada cluster
+    rowsSel <- which(clInfo$cluster == sp) # encuentra las filas que pertenecer al clúster sp
+    newMatrix[sp,] <- colSums(matAll2[rowsSel,])/length(rowsSel) # calcula la media por columnas de las filas seleccionadas, se define más adelante
+    newMatrix[sp,] <- newMatrix[sp,]-min(newMatrix[sp,])+0.0001
+  } # resta el mínimo y se suma un valor ínfimo para evitar que haya ceros
+  newMatrix
+}
+
+getTrianglesColors <- function(vertices, faces, colors){ # subdivide cada triándulo en seis más pequeños y asigna colores en base a los vértices originales
+  
+  verts <- vertices
+  triangles <- c()
+  trianColors <- c()
+  nVerts <- nrow(verts)  # Number of vertices
+  
+  for(nTri in 1:nrow(faces)){ # para cada triangulo de cada fila de faces
+    
+    oldTriangle <- faces[nTri,]      # Number of the vertices, índice de los vértices
+    
+    triVertex <- vertices[oldTriangle,]  # Vertices, extrae las coordenadas de los tres vértices
+    cen <- colSums(triVertex)/3          # Center del triángulo, promedio de las 3 coordenadas
+    n12 <- colSums(triVertex[c(1,2),])/2 # between 1 and 2 media entre estos puntos
+    n13 <- colSums(triVertex[c(1,3),])/2 # between 1 and 3 "
+    n23 <- colSums(triVertex[c(2,3),])/2 # between 2 and 3 "
+    
+    Nv1 <- oldTriangle[1] # índice del primer vértice original
+    Nv2 <- oldTriangle[2] # segundo índice
+    Nv3 <- oldTriangle[3] # tercero
+    NCen <- nVerts+1 # índices nuevos consecutivos (no lo entiendo del todo)
+    Nn12 <- nVerts+2
+    Nn13 <- nVerts+3
+    Nn23 <- nVerts+4
+    
+    verts <- rbind(verts, # agrega los nuevos puntos al final de la matriz de vértices
+                       t(matrix(c(cen,n12,n13,n23),3,4)))
+    trianColors <- append(trianColors, colors[c(Nv1,Nv1,Nv2,Nv2,Nv3,Nv3)]) # asigna los colores a los 6 subtriángulos usando los colores de los vértices originales
+      
+    triangles <- rbind(triangles, # se añaden 6 nuevos triángulos (filas) a la matriz de triangles, con sus 3 nuevos vértices.
+                       t(matrix(c(Nv1, Nn12, NCen,
+                                Nv1, Nn13, NCen,
+                                Nv2, Nn12, NCen,
+                                Nv2, Nn23, NCen,
+                                Nv3, Nn13, NCen,
+                                Nv3, Nn23, NCen),3,6))) # transpone para que cada fila sea un triángulo
+    
+    nVerts <- nVerts+4 # actualiza el contador de vértices para añadir los 4 nuevos puntos
+
+  }
+  
+  
+  list(vertices = verts,
+       triangles = triangles,
+       colors = trianColors)
+} # devuelve una lista con los vértices totales, los triangulos totales y los colores para cada subtriángulo
+
+
+# Tomamos infirmación de los datos con los que vamos a trabajar 
+rowInfo <- sessionsTable[fileN,]
+subj <- rowInfo["subj"][1,1]
+state <- rowInfo["state"][1,1]
+session <- rowInfo["session"][1,1]
+print(paste("Subj: ",subj,", State: ",state, ", Session: ",session,sep=""))
+
+# Load files
+cuFile <- readMat(rowInfo["currentsFile"][1,1])
+ssFile <- readMat(rowInfo["ssFile"][1,1])
+
+# Init and end points (desde 8 ms hasta 300 ms)
+timeInit <- min(which(cuFile$times > 8))
+timeEnd  <- min(which(cuFile$times > 300))
+timesInterval <- timeInit:timeEnd
+
+# Take data matrix
+#matAll <- cuFile$J[,timesInterval]
+matAll2 = cuFile$J[,timesInterval] * ssFile$SS[,timesInterval]
+matAll2[is.na(matAll2)] <- 0
+var_check <- apply(matAll2, 1, sd)
+matAll2 <- matAll2[var_check != 0, ]
+
+# Clustering
+set.seed(theSeed)
+clInfo <- kmeans(t(scale(t(matAll2))),partSize, nstar=20) # transpone, porque el escalado actua por columnas, así escala por filas, y devuelve al formato original volviento a transponer. 
+
+plot(t(scale(t(matAll2))), col=clInfo$cluster, main="km_7_JSS_suj23")
+
+# Get nodes and triangles de la matriz mesh, las redes
+if(subj < 15){
+  meshFileName <- paste(basePath,"Subj",subj,"/",state,"_Currents.mat",sep="")
+  subjData <- readMat(meshFileName)
+  mesh <- subjData$mesh
+  verts <- mesh[[2]]
+  faces <- mesh[[1]]
+} else { # el resto de pacientes ya tienen una mesh extraída
+  meshFileName <- paste(basePath,"/subj",subj,"/","mesh_new.mat",sep="")
+  subjData <- readMat(meshFileName)
+  verts <- subjData$vert
+  faces <- subjData$face
+}
+
+
+#pointsColors <- rep("white", nrow(verts))
+pointsColors <- commonColors[clInfo$cluster]
+
+# Triangle Colors
+result <- getTrianglesColors(verts,faces,pointsColors)
+
+verts <- result$vertices
+faces <- result$triangles
+triangleColors <- result$colors
+
+# Plot
+faces <- faces-1 # adecúa los índices a ploty, empieza contando en 0
+plot_ly(
+  x = array(verts[,1]), # coordenadas 3D xyz de los vértices
+  y = array(verts[,2]),
+  z = array(verts[,3]),
+  i = array(faces[,1]), # índices de los vártices de cada triángulo
+  j = array(faces[,2]),
+  k = array(faces[,3]),
+  facecolor = triangleColors,
+  type = "mesh3d",
+  flatshading = TRUE, #sombreado plano por triángulo, mejora la definición
+  lighting = list(ambient = 0.6, # configura los parámetros de visualización 3D para mejorar su aspecto
+                  diffuse = 0.8,
+                  fresnel = 0.1,
+                  specular = 0.5,
+                  roughness = 0.5,
+                  facenormalsepsilon = 0,
+                  vertexnormalsepsilon = 0)) %>%
+  layout(scene = list( # oculta los ejes
+    xaxis = list(visible=FALSE),
+    yaxis = list(visible=FALSE),
+    zaxis = list(visible=FALSE)
+  ))
+
+
+groupMat <- clusterRawMatrix(matAll2,clInfo) # agrupa filas de la matriz en base a los clústeres generados previamente, generando una nueva matriz con la media por clúster
+df <- melt(groupMat) # convierte la matriz a formato largo df
+colnames(df) <- c("Serie", "Tiempo", "Valor")
+p <- plot_ly()
+for (i in 1:nrow(groupMat)) { # para cada clúster (fila) añade una linea (scatter) al gráfico p.
+  p <- add_trace(p, x = df$Tiempo[df$Serie == i], 
+                    y = df$Valor[df$Serie == i], 
+                    type = 'scatter', 
+                    mode = 'lines', 
+                    line = list(color = commonColors[i]),
+                    showlegend = FALSE)  # Quitar la leyenda
+}
+
+p <- layout(p, title = paste("Subj: ",subj,", state: ",state, ", session: ", session,sep=""),
+               xaxis = list(title = "Tiempo"),
+               yaxis = list(title = "Intensidad"))
+p
+
+
+
+```
+
+# Some measures for high number of sources
+
+Esto es una prueba con un mayor número de fuentes, con las que sería muy
+costoso calcular todas las IS, pero algunas medidas se pueden obtener de
+forma más sencilla. Aquí vuelve a usarse 'kmeans' para agrupamiento y
+tanto la matriz A como las 'r' se calculan con una función
+'gLV_params_log' que de mínimo error cuadrático. Podemos hablar para
+probar otras cosas.
+
+```{r}
+
+bigClusters <- 5  # Elige el número de clústers. 
+
+# Empty data-frame to store the results
+resultsBig <- data.frame(
+  subj=integer(),
+  state=character(),
+  session=character(),
+  type=character(), # autonom / nonauto
+  species=integer(),   # Species in the GASS
+  meanAbund=double(),  # Mean abundance
+  evenness=double(), # Evenness
+  critic=double(),  # Criticality
+  sync=integer())
+
+# Recorremos todas las sesiones, haz esto para otras medidas que quieras 
+# probar: 
+for(nr in 1:nrow(sessionsTable)){
+  rowInfo <- sessionsTable[nr,]
+  subj <- rowInfo["subj"][1,1]
+  state <- rowInfo["state"][1,1]
+  session <- rowInfo["session"][1,1]
+  print(paste("Subj: ",subj,", State: ",state, ", Session: ",session,sep=""))
+  
+  # Load files
+  cuFile <- readMat(rowInfo["currentsFile"][1,1])
+  ssFile <- readMat(rowInfo["ssFile"][1,1])
+  
+  # Init and end points
+  timeInit <- min(which(cuFile$times > 8))
+  timeEnd  <- min(which(cuFile$times > 300))
+  timesInterval <- timeInit:timeEnd
+  
+  # Take data matrix
+ # matAll <- cuFile$J[,timesInterval]
+  matAll2 = cuFile$J[,timesInterval] * ssFile$SS[,timesInterval]
+  matAll2[is.na(matAll2)] <- 0
+  var_check <- apply(matAll2, 1, sd)
+matAll2 <- matAll2[var_check != 0, ]
+
+  # Clustering
+  set.seed(theSeed)
+  # Si quieres cambiar el método de agrupamiento: 
+  clInfo <- kmeans(t(scale(t(matAll2))),bigClusters)
+  # Datos agrupados: 
+  newMatrix <- matrix(0, nrow=bigClusters, ncol = ncol(matAll2))
+  for(sp in 1:bigClusters){
+    rowsSel <- which(clInfo$cluster == sp)
+    newMatrix[sp,] <- colSums(matAll2[rowsSel,])/length(rowsSel) # calcula el promedio columna a columna de las filas que pertenecen al clúster
+    newMatrix[sp,] <- newMatrix[sp,]-min(newMatrix[sp,])+0.0001
+  } # reescala los valores evitando ceros
+  
+  ############################################################
+  # Information Structure (AUTO)
+  ############################################################
+  
+  # Parámetros de la IS, autónomo significa que solo hay unas 'r' (o 'b') para todo el tiempo: 
+  params <- gLV_params_log(t(newMatrix))
+  alphas <- params$b   # Estas son las 'r' o 'b'
+  gammas <- params$A   # Matriz A
+  
+  # Ahora se hace una corrección en la matriz A para que sea estable. 
+  # Making A Lyapunov stable
+  S <- (gammas+t(gammas))/2 # convierte gammas en una versión simetrica para analizar su estabilidad
+  routh <- max(eigen(S)$values) # máximo autovalor de S
+  if(routh > 0){ # si es mayor a cero indica inestabilidad, la matriz no es negativa definida
+    print("Normalization of A matrix to be stable")
+    gammas <- gammas - (routh+0.01)*diag(bigClusters) # normaliza gammas restando el máximo autovalor + 0.01 al término diagonal de bicClusters
+    # And get parameters
+    alphas <- gLV_params_log(t(newMatrix), inter = gammas)$b # vuelve a calcular los alphas usando la función gLV_params_log con la nueva matriz gammas. Preguntar que se hace en la normalización!!!!!!
+  }
+  
+  # Aquí vienen las medidas que podemos calcular sin necesidad de crear toda
+  # la IS. 
+  
+  # Get the GASS (si la matriz no es estable, no está asegurado que exista)
+  gass   <- tryCatch(getGASS_QP(alphas, gammas), error = function(cond){getGASS_LCP_Lemke(alphas, gammas)})
+  
+  # Positions of positive values
+  gassPosInd <- which(gass > 0)
+  # Positive gass values
+  gassPos <- gass[gassPosInd]
+  # Species in the gass
+  gassSize <- length(gassPos)
+  # Critic
+  v <- (-gammas %*% gass)-alphas + gass # Sum of w and z vectors
+  critic <- min(abs(v/sqrt(sum(v^2))))          # Criticality value normalizado y componente mínima del valor absoluto
+  if(gassSize > 0){
+    # Mean abundance
+    meanAb <- mean(gassPos)
+    # Evenness (uniformidad)
+    evenn <- diversity(gass)/log(specnumber(gass)) # Shannon entre su máximo posible
+    sync <- 0
+    if(gassSize == bigClusters){
+      sync <- 1 # sincronía total, si están todas las especies presentes
+    }
+  } else { # sin o hay especies también sincronía total
+    meanAb <- 0
+    evenn <- 0
+    sync <- 1
+  }
+  
+  # Finally store the results:
+  resultsBig[nrow(resultsBig)+1,] <-
+    c(subj,
+      state,
+      session,
+      "BigAutonom",
+      gassSize, # Species in the GASS
+      meanAb, # Mean Abundance
+      evenn, # Evenness
+      critic, # Criticality
+      sync  # Synchronicity 
+      ) 
+}
+
+resultsBig$subj <- as.numeric(resultsBig$subj)
+resultsBig$species <- as.numeric(resultsBig$species)
+resultsBig$critic <- as.numeric(resultsBig$critic)
+resultsBig$sync <- as.numeric(resultsBig$sync)
+resultsBig$meanAbund <- as.numeric(resultsBig$meanAbund)
+resultsBig$evenness <- as.numeric(resultsBig$evenness)
+
+```
+
+## View results for big parcellation
+
+Aquí vemos los resultados del paso anterior.
+
+```{r}
+
+resultsBig2 <- filter(resultsBig, type == "BigAutonom")
+orden_estados <- c("wake", "sleep", "swsleep", "xenon", "propofol")
+resultsBig2$state <- factor(resultsBig2$state, levels = orden_estados, ordered = TRUE) # ordena los estados en función de la lista que se le indica
+colores_estados <- c("wake" = "blue", "sleep" = "green", "swsleep" = "pink", "xenon" = "orange", "propofol" = "purple")
+
+measures1 <- t(matrix(c( # genera las etiquetas para los resultados
+              c('species','GASS size (Big)'),
+              c('critic','Criticality (Big)'),
+              c('sync','Synchronicity (Big)'),
+              c('meanAbund','Mean GASS abundance (Big)'),
+              c('evenness','GASS evenness (Big)')), nrow=2))
+
+
+for(mn in 1:nrow(measures1)){ # gráfico por medida de la tabla (5)
+  measure <- measures1[mn,1] # extrae el nombre de la variable
+  name <- measures1[mn,2] # extrae la descripción
+  print(ggplot(resultsBig2, aes(x = as.factor(subj),  # x son sujetos convertidos a factor
+        y = !!as.name(measure), color = state)) + # !!as.name permite usar el valor measure como nombre de la columna
+    geom_point(size=3, shape = 21, stroke = 1) + #, position = 'jitter') +
+    labs(x = "Subject", y = name, color = "State") +
+    scale_color_manual(values = colores_estados) +
+    theme_minimal())   
+}
+
+write.csv2(resultsBig2, file = "resultsBig2_k5_JSS.csv")
+
+```
+
+# Build and measure IS
+
+Aquí sí vamos a construir IS completas y medir varias cosas. Es por
+tanto más lento. Se calcula para cada sujeto y sesión: - Grafo de
+invasión (muy parecido a la IS, pero no requiere matriz estable) -
+Estructura informacional (IS) autónoma, es decir, con unos mismos 'r'
+para todo el tiempo. - IS no autónoma, es decir, los 'r' van cambiando
+en el tiempo.
+
+Los resultados obtenidos se guardan en 'results'.
+
+```{r}
+
+# Empty data-frame to store the results
+results <- data.frame(
+  subj=integer(),
+  state=character(),
+  session=character(),
+  type=character(), # autonom / nonauto
+  nodes=integer(),  # Number of nodes
+  species=integer(),# Species in the GASS
+  frondV=double(),  # Frondosity of vertex
+  frondE=double(),  # Frondosity of edges
+  critic=double(),  # Criticality
+  sync=integer(),   # Synchronicity
+  coopLH=integer(),
+  coopA=integer(),
+  coopB=integer(),
+  coopC=integer(),
+  igacyclic=integer(),
+  ignpoints=integer(),
+  ignpointsPermanent=integer(),
+  igngass=integer(),
+  ignedges=integer(),
+  igfrondN=double(),
+  igfrondE=double(),
+  igcrit=double(),
+  ignSpec=double(),
+  iggassAb=double(),
+  igevenn=double(),
+  igspBett=double()
+)
+
+for(nr in 1:nrow(sessionsTable)){
+  rowInfo <- sessionsTable[nr,]
+  subj <- rowInfo["subj"][1,1]
+  state <- rowInfo["state"][1,1]
+  session <- rowInfo["session"][1,1]
+  print(paste("Subj: ",subj,", State: ",state, ", Session: ",session,sep=""))
+  
+  # Load files
+  cuFile <- readMat(rowInfo["currentsFile"][1,1])
+  ssFile <- readMat(rowInfo["ssFile"][1,1])
+  
+  # Init and end points
+  timeInit <- min(which(cuFile$times > 8))
+  timeEnd  <- min(which(cuFile$times > 300))
+  timesInterval <- timeInit:timeEnd
+  
+  # Take data matrix
+ # matAll <- cuFile$J[,timesInterval]
+  matAll2 = cuFile$J[,timesInterval] * ssFile$SS[,timesInterval]
+  matAll2[is.na(matAll2)] <- 0
+  var_check <- apply(matAll2, 1, sd)
+matAll2 <- matAll2[var_check != 0, ]
+
+  # Clustering
+  set.seed(theSeed)
+  clInfo <- kmeans(t(scale(t(matAll2))),nClusters)
+  newMatrix <- matrix(0, nrow=nClusters, ncol = ncol(matAll2))
+  for(sp in 1:nClusters){
+    rowsSel <- which(clInfo$cluster == sp)
+    newMatrix[sp,] <- colSums(matAll2[rowsSel,])/length(rowsSel)
+    newMatrix[sp,] <- newMatrix[sp,]-min(newMatrix[sp,])+0.0001
+  }
+  
+  ############################################################
+  # Invasion graph (AUTO)
+  ############################################################
+  
+  # Parametrs for IG
+  params <- gLV_params_log(t(newMatrix)) #, inter = priorA)
+  gammas <- params$A  # Matriz que vamos a usar sin regularizar
+  alphas <- params$b
+  
+  # Invasion Graph
+  ISchComm=LV.ISandComm(gammas,alphas)
+  # compute the invasion graph
+  out=IG.functionComm(ISchComm)
+  ISch=ISchComm$IS
+  
+  # Measures
+  ig_points <- ISchComm$Comm
+  ig_npoints <- nrow(ig_points)         # Number of points in the IG
+  ig_npointsPermanent <- sum(out$permanent) # Permanent points
+  ig_nedges <- sum(out$IG)  # Number of edges
+  ig_frondN <- IGnodeFrond(ig_points)   # node frondosity
+  ig_frondE <- ig_nedges/(ig_npoints*(ig_npoints-1)/2) # edge frondosity
+  ig_gass <- IGgassIndex(out,ig_points)    # Index of the GASS(es)
+  ig_nSpec <- IGspeciesGASS(out,ig_points) # (mean) number of species in the GASS(es)
+  ig_crit <- IGcriticality(out, ig_points, ig_gass, alphas, gammas)
+  ig_gassAb <- IGmeanAbundGASS(ig_points,ig_gass) # (mean) abundances in the GASS(es)
+  ig_evenn <- IGmeanEvenness(ig_points,ig_gass) # (mean) evenness of the GASS(es)
+  ig_acyclic <- 0
+  if(out$acyclic){
+    ig_acyclic <- 1
+  }
+  ig_spBett <- IGspeciesBetweenness(out)
+
+  ############################################################
+  # Information Structure (AUTO)
+  ############################################################
+
+  # Making A Lyapunov stable
+  gammasIS <- gammas
+  S <- (gammasIS+t(gammasIS))/2
+  routh <- max(eigen(S)$values)
+  if(routh > 0){
+    print("Normalization of A matrix to be stable")
+    gammasIS <- gammasIS - (routh+0.01)*diag(nClusters)
+    # And get parameters
+    alphasIS <- gLV_params_log(t(newMatrix), inter = gammasIS)$b
+  }
+  alp <- alphasIS  
+  # Information structure
+  IS <- ISbuild(alp,gammasIS)  
+  gr <- ISgraph(IS,1:nClusters)   # Graph
+  # Measures
+  ISm <- getISmeasures(IS,gr, alp, gammasIS) 
+  npoints <- dim(IS$points)[1]
+  # Frondosity of edges (relativa)
+  if(npoints == 1){
+    frondE <- 1 # si solo hay un punto se asigna por convención una frondosidad de 1
+  } else {
+    frondE <- length(E(gr$graph))/(npoints*(npoints-1)/2)
+  } # número de aristas en el grafo entre el número máximo posible de conexiones en un grafo no dirigido sin bucles 
+  
+  # Finally store the results:
+  results[nrow(results)+1,] <-
+    c(subj,
+      state,
+      session,
+      "autonom",
+      npoints, # Number of points
+      sum(rep(1,nClusters)[IS$points[IS$gassInd,]>0]), # Species in the GASS
+      ISm$frond,  # Frondosity of vertex
+      frondE,     # Frondosity of edges:
+      ISm$crit,   # Criticality
+      ISm$sync,   # Synchronicity
+      ISm$coopLH,
+      ISm$coopA,
+      ISm$coopB,
+      ISm$coopC,
+      ig_acyclic,
+      ig_npoints,
+      ig_npointsPermanent,
+      length(ig_gass),  
+      ig_nedges,
+      ig_frondN,
+      ig_frondE,
+      ig_crit,
+      ig_nSpec,
+      mean(ig_gassAb),
+      ig_evenn,
+      mean(ig_spBett)) 
+  
+  ##########################################################################
+  # Non-autonomous
+  ##########################################################################
+  
+  maxA <- ncol(newMatrix)-1 # evita exceder el rango, número máximo de tiempos
+  for(a in 1:maxA){
+    # Set limits, el derecho y el izquierdo de la ventana alrededor del tiempo a.
+    Linit <- if(a<windW) 1 else a-windW # si la posición actual a es menor que el tamaño e la ventana, entonces el límite inferior es 1, inicio del vector, si no, se fija en a - ventana, es decir, el valor de la ventana hacia atrás desde a
+    Lend <- if(a+windW>maxA) maxA else a+windW # si el límite superior de la ventana excede el tamaño masA, se ajusta a este, si no se fija en a + ventana, es decir, el tamaño de la ventana hacia adelante desde a
+    # Call the function to set parameters by setting the matrix and limits: 
+    alphasIG <- gLV_params_log(t(newMatrix), inter = gammas, intra = NULL, limits=Linit:Lend)$b 
+    alphasIS <- gLV_params_log(t(newMatrix), inter = gammasIS, intra = NULL, limits=Linit:Lend)$b
+    
+    ###########################################
+    # IG (non-auto)
+    ###########################################
+    
+    # Parametrs for IG
+    alphas <- alphasIG
+    
+    # Invasion Graph
+    ISchComm=LV.ISandComm(gammas,alphas)
+    # compute the invasion graph
+    out=IG.functionComm(ISchComm)
+    ISch=ISchComm$IS
+    
+    # Measures
+    ig_points <- ISchComm$Comm
+    ig_npoints <- nrow(ig_points)         # Number of points in the IG
+    ig_npointsPermanent <- sum(out$permanent) # Permanent points
+    ig_nedges <- sum(out$IG)  # Number of edges
+    ig_frondN <- IGnodeFrond(ig_points)   # node frondosity
+    ig_frondE <- ig_nedges/(ig_npoints*(ig_npoints-1)/2) # edge frondosity
+    ig_gass <- IGgassIndex(out,ig_points)    # Index of the GASS(es)
+    ig_nSpec <- IGspeciesGASS(out,ig_points) # (mean) number of species in the GASS(es)
+    ig_crit <- IGcriticality(out, ig_points, ig_gass, alphas, gammas)
+    ig_gassAb <- IGmeanAbundGASS(ig_points,ig_gass) # (mean) abundances in the GASS(es)
+    ig_evenn <- IGmeanEvenness(ig_points,ig_gass) # (mean) evenness of the GASS(es)
+    ig_acyclic <- 0
+    if(out$acyclic){
+      ig_acyclic <- 1 # le da valor 1 "TRUE" si no tiene ciclos
+    }
+    ig_spBett <- IGspeciesBetweenness(out)
+    
+    ###########################################
+    # IS (non-auto)
+    ###########################################
+    
+    alp <- alphasIS  
+    # Information structure
+    IS <- ISbuild(alp,gammasIS)  
+    gr <- ISgraph(IS,1:nClusters)   # Graph
+    # Measures
+    ISm <- getISmeasures(IS,gr, alp, gammasIS) 
+    npoints <- dim(IS$points)[1]
+    # Frondosity of edges
+    if(npoints == 1){
+      frondE <- 1
+    } else {
+      frondE <- length(E(gr$graph))/(npoints*(npoints-1)/2)
+    }
+    
+    # Finally store the results:
+    results[nrow(results)+1,] <-
+      c(subj,
+        state,
+        session,
+        "nonautonom",
+        npoints, # Number of points
+        sum(rep(1,nClusters)[IS$points[IS$gassInd,]>0]), # Species in the GASS
+        ISm$frond,  # Frondosity of vertex
+        frondE,     # Frondosity of edges:
+        ISm$crit,   # Criticality
+        ISm$sync,   # Synchronicity
+        ISm$coopLH,
+        ISm$coopA,
+        ISm$coopB,
+        ISm$coopC,
+        ig_acyclic,
+        ig_npoints,
+        ig_npointsPermanent,
+        length(ig_gass),  
+        ig_nedges,
+        ig_frondN,
+        ig_frondE,
+        ig_crit,
+        ig_nSpec,
+        mean(ig_gassAb),
+        ig_evenn,
+        mean(ig_spBett)) 
+    
+  }
+  
+}
+
+results$subj <- as.numeric(results$subj)
+results$nodes <- as.numeric(results$nodes)
+results$species <- as.numeric(results$species)
+results$frondV <- as.numeric(results$frondV)
+results$frondE <- as.numeric(results$frondE)
+results$critic <- as.numeric(results$critic)
+results$sync <- as.numeric(results$sync)
+results$coopLH <- as.numeric(results$coopLH)
+results$coopA <- as.numeric(results$coopA)
+results$coopB <- as.numeric(results$coopB)
+results$coopC <- as.numeric(results$coopC)
+
+results$igacyclic <- as.numeric(results$igacyclic)
+results$ignpoints <- as.numeric(results$ignpoints)
+results$ignpointsPermanent <- as.numeric(results$ignpointsPermanent)
+results$igngass <- as.numeric(results$igngass)
+results$ignedges <- as.numeric(results$ignedges)
+results$igfrondN <- as.numeric(results$igfrondN)
+results$igfrondE <- as.numeric(results$igfrondE)
+results$igcrit <- as.numeric(results$igcrit)
+results$ignSpec <- as.numeric(results$ignSpec)
+results$iggassAb <- as.numeric(results$iggassAb)
+results$igevenn <- as.numeric(results$igevenn)
+results$igspBett <- as.numeric(results$igspBett)
+
+```
+
+## Save / read
+
+Puedes usar esto una vez obtenidos todos los resultados para almecenar
+'results', o para leer un fichero guardado previamente. Ve dando nombres
+a las pruebas que hagas.
+
+```{r}
+# write.csv(results, paste("analysis/IS_SleepAnsthesia_Res1_Crit_Non_Auto_7.csv",sep=""))
+#write.csv(results, paste("analysis/IS_SleepAnsthesia_Res1_Crit_Non_Auto_3.csv",sep=""))
+#wwrite.csv(results, paste("analysis/IS_SleepAnsthesia_Res1_Crit_Non_Auto_5.csv",sep=""))
+#results <- read.csv(paste("analysis/ISmeasures_KMeans-e3n15.csv",sep=""))
+```
+
+## Visualization (autonomous)
+
+Vemos los resultados de las medidas en los modelos autónomos (IS y IG).
+
+```{r}
+
+results2 <- filter(results, type == "autonom")
+orden_estados <- c("wake", "sleep", "swsleep", "xenon", "propofol")
+results2$state <- factor(results2$state, levels = orden_estados, ordered = TRUE)
+colores_estados <- c("wake" = "blue", "sleep" = "green", "swsleep" = "pink", "xenon" = "orange", "propofol" = "purple")
+
+measures1 <- t(matrix(c(c('nodes', 'Number of IS nodes'),
+              c('species','GASS size (IS)'),
+              c('frondV','Node frondosity (IS)'),
+              c('frondE','Edge frondosity (IS)'),
+              c('critic','Criticality (IS)'),
+              c('sync','Synchronicity (IS)'),
+              c('coopLH','Highest coop. level (IS)'),
+              c('coopA','Coperation value A (IS)'),
+              c('coopB','Cooperation value B (IS)'),
+              c('coopC','Cooperation value C (IS)'),
+              c('igacyclic','Acyclic IG'),
+              c('ignpoints','Number of nodes (IG)'),
+              c('ignpointsPermanent','Number of permannt nodes (IG)'),
+              c('igngass','Number of GASS points (IG)'),
+              c('ignedges','Number of edges (IG)'),
+              c('igfrondN','Node frondosity (IG)'),
+              c('igfrondE','Edge frondosity (IG)'),
+              c('igcrit','Criticality (IG)'),
+              c('ignSpec','GASS size (IG)'),
+              c('iggassAb','Mean GASS abundance (IG)'),
+              c('igevenn','GASS evenness (IG)'),
+              c('igspBett','Mean betweenness (IG)')), nrow=2))
+
+
+for(mn in 1:nrow(measures1)){
+  measure <- measures1[mn,1]
+  name <- measures1[mn,2]
+  print(ggplot(results2, aes(x = as.factor(subj), 
+        y = !!as.name(measure), color = state)) +
+    geom_point(size=3, shape = 21, stroke = 1) + #, position = 'jitter') +
+    labs(x = "Subject", y = name, color = "State") +
+    scale_color_manual(values = colores_estados) +
+    theme_minimal())   
+}
+write.csv(results2, paste("analysis/IS_SleepAnsthesia_Res1_Crit_Auto_5_JSS.csv",sep=""))
+
+
+```
+
+## Visualization (non-autonom)
+
+Ahora vemos los resultados en las IS no autónomas. Tiene que salir
+así???? Si
+
+```{r}
+
+results3 <- filter(results, type == "nonautonom")
+orden_estados <- c("wake", "sleep", "swsleep", "xenon", "propofol")
+results3$state <- factor(results3$state, levels = orden_estados, ordered = TRUE)
+colores_estados <- c("wake" = "blue", "sleep" = "green", "swsleep" = "pink", "xenon" = "orange", "propofol" = "purple")
+
+
+for(mn in 1:nrow(measures1)){
+  measure <- measures1[mn,1]
+  name <- measures1[mn,2]
+  print(ggplot(results3, aes(x = as.factor(subj), 
+        y = !!as.name(measure), color = state)) +
+    geom_point(position = 'jitter') +
+    labs(x = "Subject", y = name, color = "State") +
+    scale_color_manual(values = colores_estados) +
+    theme_minimal())   
+}
+write.csv(results3, paste("analysis/IS_SleepAnsthesia_Res1_Crit_Non_Auto_5_JSS.csv",sep=""))
+
+
+```

@@ -1,0 +1,224 @@
+---
+title: "Visualizacion_resultados"
+author: "J. Ángel Sayáns Crespo"
+date: '2025-06-22'
+output: html_document
+---
+Library:
+
+```{r}
+library(ggplot2)
+library(readr)
+library(dplyr)
+```
+Load csv:
+
+```{r}
+
+folder_path <- "./analysis/"
+files <- list.files(path = folder_path, pattern = "\\.csv$", full.names = TRUE)
+data_list <- list()
+
+for (file in files) {
+  var_name <- tools::file_path_sans_ext(basename(file))
+  var_name <- make.names(var_name)
+  
+  # First line
+  first_line <- readLines(file, n = 1)
+  
+  if (grepl(";", first_line)) {
+    delim_used <- ";"
+  } else {
+    delim_used <- ","
+  }
+  
+  data_list[[var_name]] <- read_delim(file, delim = delim_used, show_col_types = FALSE)
+}
+names(data_list)
+
+
+### visualization bigresults
+
+# List
+result_vars <- c("resultsBig2_k10", "resultsBig2_k10_JSS", "resultsBig2_k7", "resultsBig2_k7_JSS", "resultsBig2_k5", "resultsBig2_k5_JSS")
+
+# Colors
+orden_estados <- c("wake", "sleep", "swsleep", "xenon", "propofol")
+colores_estados <- c("wake" = "blue", "sleep" = "green", "swsleep" = "pink", "xenon" = "orange", "propofol" = "purple")
+
+# Names
+measures1 <- t(matrix(c(
+  c('species','GASS size (Big)'),
+  c('critic','Criticality (Big)'),
+  c('sync','Synchronicity (Big)'),
+  c('meanAbund','Mean GASS abundance (Big)'),
+  c('evenness','GASS evenness (Big)')), nrow=2))
+
+for (varname in result_vars) {
+  resultsBig <-  data_list[[varname]]
+  resultsBig2 <- filter(resultsBig, type == "BigAutonom")
+  resultsBig2$state <- factor(resultsBig2$state, levels = orden_estados, ordered = TRUE)
+  
+  cat("\nMostrando resultados para:", varname, "\n")
+  
+  for (mn in 1:nrow(measures1)) {
+    measure <- measures1[mn,1]
+    name <- measures1[mn,2]
+    
+    print(
+      ggplot(resultsBig2, aes(x = as.factor(subj),
+                              y = !!as.name(measure),
+                              color = state)) +
+        geom_point(size = 3, shape = 21, stroke = 1) +
+        labs(title = paste(varname), x = "Subject", y = name, color = "State") +
+        scale_color_manual(values = colores_estados) +
+        theme_minimal()
+      + theme(axis.text.y = element_blank(), axis.ticks.y = element_blank())
+    )
+  }
+}
+
+```
+
+Visualización autonom:
+
+```{r}
+# Colors
+orden_estados <- c("wake", "sleep", "swsleep", "xenon", "propofol")
+colores_estados <- c("wake" = "blue", "sleep" = "green", "swsleep" = "pink", "xenon" = "orange", "propofol" = "purple")
+
+# Measures (labels)
+measures2 <- t(matrix(c(
+  c('nodes', 'Number of IS nodes'),
+  c('species','GASS size (IS)'),
+  c('frondV','Node frondosity (IS)'),
+  c('frondE','Edge frondosity (IS)'),
+  c('critic','Criticality (IS)'),
+  c('sync','Synchronicity (IS)'),
+  c('coopLH','Highest coop. level (IS)'),
+  c('coopA','Coperation value A (IS)'),
+  c('coopB','Cooperation value B (IS)'),
+  c('coopC','Cooperation value C (IS)'),
+  c('igacyclic','Acyclic IG'),
+  c('ignpoints','Number of nodes (IG)'),
+  c('ignpointsPermanent','Number of permannt nodes (IG)'),
+  c('igngass','Number of GASS points (IG)'),
+  c('ignedges','Number of edges (IG)'),
+  c('igfrondN','Node frondosity (IG)'),
+  c('igfrondE','Edge frondosity (IG)'),
+  c('igcrit','Criticality (IG)'),
+  c('ignSpec','GASS size (IG)'),
+  c('iggassAb','Mean GASS abundance (IG)'),
+  c('igevenn','GASS evenness (IG)'),
+  c('igspBett','Mean betweenness (IG)')
+), nrow=2))
+
+# No "Non" not "Big"
+archivos <- list.files("./analysis", pattern = "\\.csv$", full.names = TRUE)
+archivos <- archivos[!grepl("Non|Big", archivos, ignore.case = TRUE)]
+
+for (archivo in archivos) {
+  results <- read_csv(archivo, show_col_types = FALSE)
+  if (!"type" %in% colnames(results)) next  
+  
+  results2 <- filter(results, type == "autonom")
+  results2$state <- factor(results2$state, levels = orden_estados, ordered = TRUE)
+  
+  if (!"subj" %in% colnames(results2)) results2$subj <- seq_len(nrow(results2)) 
+  
+  cat("\nVisualizando:", basename(archivo), "\n")
+  
+  for (mn in 1:nrow(measures2)) {
+    measure <- measures2[mn, 1]
+    name <- measures2[mn, 2]
+    
+    if (measure %in% colnames(results2)) {
+      p <- ggplot(results2, aes(x = as.factor(subj), y = !!as.name(measure), color = state)) +
+        geom_point(size = 3, shape = 21, stroke = 1) +
+        labs(title = paste0(basename(archivo), " - ", name),
+             x = "Subject", y = name, color = "State") +
+        scale_color_manual(values = colores_estados) +
+        theme_minimal() +
+        theme(axis.text.x = element_text(angle = 90, size = 6))
+      
+      print(p)
+    }
+  }
+}
+
+```
+
+Non-autonomous:
+```{r}
+# Only "Non" files 
+folder_path <- "./analysis/"
+files <- list.files(path = folder_path, pattern = "Non.*\\.csv$", full.names = TRUE, ignore.case = TRUE)
+data_list <- list()
+
+for (file in files) {
+  var_name <- tools::file_path_sans_ext(basename(file))
+  var_name <- make.names(var_name)
+  
+ 
+  first_line <- readLines(file, n = 1)
+  delim_used <- if (grepl(";", first_line)) ";" else ","
+  
+
+  data_list[[var_name]] <- read_delim(file, delim = delim_used, show_col_types = FALSE)
+}
+
+orden_estados <- c("wake", "sleep", "swsleep", "xenon", "propofol")
+colores_estados <- c("wake" = "blue", "sleep" = "green", "swsleep" = "pink", "xenon" = "orange", "propofol" = "purple")
+
+measures1 <- t(matrix(c(
+  c('nodes', 'Number of IS nodes'),
+  c('species','GASS size (IS)'),
+  c('frondV','Node frondosity (IS)'),
+  c('frondE','Edge frondosity (IS)'),
+  c('critic','Criticality (IS)'),
+  c('sync','Synchronicity (IS)'),
+  c('coopLH','Highest coop. level (IS)'),
+  c('coopA','Cooperation value A (IS)'),
+  c('coopB','Cooperation value B (IS)'),
+  c('coopC','Cooperation value C (IS)'),
+  c('igacyclic','Acyclic IG'),
+  c('ignpoints','Number of nodes (IG)'),
+  c('ignpointsPermanent','Number of permanent nodes (IG)'),
+  c('igngass','Number of GASS points (IG)'),
+  c('ignedges','Number of edges (IG)'),
+  c('igfrondN','Node frondosity (IG)'),
+  c('igfrondE','Edge frondosity (IG)'),
+  c('igcrit','Criticality (IG)'),
+  c('ignSpec','GASS size (IG)'),
+  c('iggassAb','Mean GASS abundance (IG)'),
+  c('igevenn','GASS evenness (IG)'),
+  c('igspBett','Mean betweenness (IG)')
+), nrow=2))
+
+for (varname in names(data_list)) {
+  results3 <- filter(data_list[[varname]], type == "nonautonom")
+  results3$state <- factor(results3$state, levels = orden_estados, ordered = TRUE)
+  
+  cat("\nMShowing results for:", varname, "\n")
+  
+  for (mn in 1:nrow(measures1)) {
+    measure <- measures1[mn, 1]
+    name <- measures1[mn, 2]
+    
+    if (measure %in% colnames(results3)) {
+      print(
+        ggplot(results3, aes(x = as.factor(subj), y = !!as.name(measure), color = state)) +
+          geom_point(position = 'jitter') +
+          labs(title = paste0(varname), x = "Subject", y = name, color = "State") +
+          scale_color_manual(values = colores_estados) +
+          theme_minimal() +
+          theme(axis.text.y = element_blank(), axis.ticks.y = element_blank())
+      )
+    }
+  }
+}
+```
+
+
+
+

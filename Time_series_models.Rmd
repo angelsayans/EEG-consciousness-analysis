@@ -1,0 +1,2809 @@
+---
+title: "TFM_aglomerado_sincero"
+author: "J. Ángel Sayáns Crespo"
+date: '2025-06-04'
+output:
+  pdf_document: 
+    latex_engine: xelatex
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Reading files and building a table
+
+It builds the 'sessionsTable', which compiles all the data to be processed. The columns indicate subject, condition, session (since a subject may have multiple recordings), and file paths for current data (sources) and significant sources (SS).
+
+Library:
+
+```{r}
+library(plotly)
+library(tidyverse)
+library(cluster)
+library(reticulate)
+library(reshape2)
+library(R.matlab)
+```
+
+```{r, message=FALSE, eval = FALSE}
+basePath <- "C:/Users/angel/Desktop/Universidade/MADOBIS/TFM/SleepAnesthesia/"
+#filesLoc <- paste(py$basePath,'/',sep='')
+
+# Get the session number from the filname (para los sujetos 27-32)
+stringSession <- function(cadena) {
+  elementos <- strsplit(cadena, "_")[[1]] 
+  penultima_ocurrencia <- tail(elementos, 2)[1]
+  return(penultima_ocurrencia)
+}
+
+getAllSessions <- function(subj, state){
+  patron <- paste('Currents1_',state,'_.*_SS\\.mat', sep='') 
+  genPath <- paste(basePath,'subj', subj, '/', sep='') 
+  archivos <- list.files(path = genPath, pattern = patron)
+  as.vector(sapply(archivos, stringSession))
+}
+
+sessionsTable <- data.frame( 
+  subj=integer(), 
+  state=character(), 
+  session=character(),
+  currentsFile=character(),
+  ssFile=character()
+)
+for(subj in 9:14){ 
+  states <- c("wake","sleep")
+  if(subj > 10){ 
+    states <- c("wake","sleep","swsleep") 
+  }
+  for(state in states){
+    fileCurr <- paste(basePath,"Subj",subj,"/",state,"_Currents.mat",sep="") 
+    fileSS <- paste(basePath,"Subj",subj,"/",state,"_SS.mat",sep="") 
+    sessionsTable[nrow(sessionsTable)+1,] <- 
+      c(subj,state,"0",fileCurr,fileSS) 
+  }
+}
+for(subj in 21:26){
+  states <- c("wake","xenon") 
+  for(state in states){
+    fileCurr <- paste(basePath,"subj",subj,"/Currents1_",state,".mat",sep="") 
+    fileSS <- paste(basePath,"subj",subj,"/Currents1_",state,"_SS.mat",sep="") 
+    sessionsTable[nrow(sessionsTable)+1,] <- 
+      c(subj,state,"0", fileCurr, fileSS) 
+  }
+}
+for(subj in 27:32){
+  states <- c("wake","propofol") 
+  for(state in states){
+    allSess <- getAllSessions(subj, state) 
+    for(session in allSess){
+      fileCurr <-  paste(basePath,"subj",subj,"/Currents1_",state,"_",session,".mat",sep="") 
+      fileSS <-  paste(basePath,"subj",subj,"/Currents1_",state,"_",session,"_SS.mat",sep="") 
+      sessionsTable[nrow(sessionsTable)+1,] <- 
+        c(subj, state, session, fileCurr, fileSS)  
+    }
+  }
+}
+sessionsTable$subj <- as.numeric(sessionsTable$subj) 
+
+# save(sessionsTable, file = "sessionsTAble.RData")
+
+# List of all current matrices
+
+current_list = list()
+ss_list = list()
+
+for (fileN in 1:nrow(sessionsTable)){
+  
+# Information from data
+rowInfo <- sessionsTable[fileN,]
+subj <- rowInfo["subj"][1,1]
+state <- rowInfo["state"][1,1]
+session <- rowInfo["session"][1,1]
+print(paste("Subj: ",subj,", State: ",state, ", Session: ",session,sep=""))
+
+# Load files
+cuFile <- readMat(rowInfo["currentsFile"][1,1])
+ssFile <- readMat(rowInfo["ssFile"][1,1])
+
+# Init and end points (desde 8 ms hasta 300 ms)
+timeInit <- min(which(cuFile$times > 8))
+timeEnd  <- min(which(cuFile$times > 300))
+timesInterval <- timeInit:timeEnd
+
+# Take data matrix
+current <- cuFile$J[,timesInterval]
+ss <- ssFile$SS[,timesInterval]
+
+# Name
+name <- paste0("subj", subj, "_", state, "_sess", session)
+
+# Save
+current_list[[name]] <- t(scale(t(current)))
+ss_list[[name]] <- t(scale(t(ss)))
+}
+
+load("sessionsTable.RData")
+```
+
+```{r, eval=FALSE}
+save(current_list, file="current_list.RData")
+save(ss_list, file="ss_list.RData")
+```
+
+
+The available data have the following structure:
+
+Patients 9–32 are available; patients 9–14 are selected for analysis.
+
+Each patient (9–14) has two conditions: sleep and wake.
+
+Each condition includes two data lists: current and SS.
+
+From current we obtain:
+
+double J (3004 × 361)
+
+double times (1 × 361)
+
+mesh (network)
+
+From SS we obtain:
+
+double SS (3004 × 361) with binary values
+
+double SS.sorted (3004 × 107)
+
+double times (1 × 361)
+
+double times.sorted (1 × 107)
+
+## Python enviroment "timeseries":
+
+```{r, message=FALSE}
+# Creación de entorno Python
+reticulate::virtualenv_create("timeseries")
+reticulate::use_virtualenv("timeseries")
+reticulate::virtualenv_install("timeseries", "cesium")
+reticulate::virtualenv_install("timeseries", "matplotlib")
+reticulate::virtualenv_install("timeseries", "xgboost")
+reticulate::virtualenv_install("timeseries", "tslearn")
+reticulate::virtualenv_install("timeseries", "pandas")
+reticulate::virtualenv_install("timeseries", "numpy")
+reticulate::virtualenv_install("timeseries", "Pywavelets")
+reticulate::virtualenv_install("timeseries", "seaborn")
+reticulate::virtualenv_install("timeseries", "plotly")
+reticulate::virtualenv_install("timeseries", "joblib")
+```
+
+```{python}
+# Packages
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.model_selection import KFold
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score, recall_score, f1_score, roc_auc_score, roc_curve, auc
+from xgboost import XGBClassifier
+import xgboost as xgb
+from sklearn.preprocessing import LabelEncoder
+import seaborn as sns
+import plotly.express as px
+from sklearn.preprocessing import LabelEncoder
+from cesium.featurize import featurize_time_series as ft
+import joblib as jb
+```
+
+## Features generation:
+
+```{python}
+features_to_use = ["amplitude",
+    "percent_beyond_1_std",
+    "maximum",
+    "max_slope",
+    "median",
+    "median_absolute_deviation",
+    "percent_close_to_median",
+    "minimum",
+    "skew",
+    "std",
+    "weighted_average",
+    ]
+```
+
+## Analysis 0-300ms:
+
+### Load data:
+
+```{r}
+load("current_list.RData")
+load("ss_list.RData")
+```
+
+### 1º analysis JxSS
+
+```{r, message=FALSE}
+# Combination of J and SS
+JSS_list <- mapply(function(a, b) a * b, current_list, ss_list, SIMPLIFY = FALSE)
+```
+
+#### Mean
+
+```{r, message=FALSE}
+# We compute the mean of their values column-wise, obtaining the average at each time point across all sources.
+
+JSS_list_means = lapply(JSS_list, function(c){colMeans(c, na.rm = TRUE)})
+
+# Time series visualization for each patient and condition
+
+#for(i in seq_along(JSS_list_means)){
+ # plot(1:107, JSS_list_means[[i]], type = "l",
+  #     col = "blue", xlab = "time", ylab = "value",
+   #    main = names(JSS_list_means)[i])
+  #Sys.sleep(1) 
+#}
+#save(JSS_list_means, file = "JSS_list_means.RData")
+```
+
+#### Standard deviation
+
+Standard deviations are computed across sources for each time point t in every matrix.:
+
+```{r, message=FALSE}
+# The standard deviation is calculated column-wise, yielding the value at each time instant along the sequence.
+
+JSS_list_sd <- lapply(JSS_list, function(m) apply(m, 2, sd, na.rm = TRUE))
+
+# Time series visualization for each patient and condition
+
+#for(i in seq_along(JSS_list_sd)){
+ #plot(1:107, JSS_list_sd[[i]], type = "l",
+  #  col = "blue", xlab = "time", ylab = "value",
+   # main = names(JSS_list_sd)[i])
+  #Sys.sleep(1)  
+#}
+# save(JSS_list_sd, file = "JSS_list_sd.RData")
+
+```
+
+#### Time series analysis (means)
+
+We adapt the EEG data to the Python environment by generating a dictionary for further analysis. To achieve this, we must first save the variables generated in R into the Python workspace.
+
+```{python}
+# Load data means
+EEG = r.JSS_list_means
+
+# The keys of the dictionaries are extracted.
+samples = list(EEG.keys())
+conditions = np.array([s.split('_')[1] for s in samples])
+patients = np.unique([s.split('_')[0] for s in samples])
+measurements = list(EEG.values())
+times = [np.arange(len(m)) for m in measurements]
+dict_EEG = {"samples": samples,
+  "measurements": measurements,
+  "times": times,
+  "conditions": conditions,
+  "patients": patients}
+  
+type(dict_EEG)
+dict_EEG.keys()
+```
+
+##### Features generation
+
+```{python}
+fset_cesium = ft(times = dict_EEG["times"], values = dict_EEG["measurements"], errors = [None] * len(dict_EEG["times"]), features_to_use = features_to_use, scheduler = None)
+fset_cesium.head
+
+X = fset_cesium.values
+y = np.array(dict_EEG["conditions"])
+```
+
+##### Random Forest: The dataset is divided into training and test sets. The model is trained, and its performance is assessed.
+
+```{python}
+kf = KFold(n_splits=3, shuffle=True, random_state=20)
+model_cesium = RandomForestClassifier(n_estimators=8, random_state=14)
+accuracies_JSS_means = []
+
+for train_idx, test_idx in kf.split(X):
+    X_train, X_test = X[train_idx], X[test_idx]
+    y_train, y_test = y[train_idx], y[test_idx]
+
+    model_cesium.fit(X_train, y_train)
+    pred = model_cesium.predict(X_test)
+    accuracies_JSS_means.append(accuracy_score(y_test, pred))
+
+print(f'Average accuracy k-fold CV: {np.mean(accuracies_JSS_means):.2f}')
+accuracies_JSS_means
+```
+
+##### *XGboost* classification
+
+```{python}
+# Label codification
+le = LabelEncoder()
+y_encoded = le.fit_transform(y)
+
+# K-fold Cross Validation
+kf_x = KFold(n_splits=3, shuffle=True, random_state=20)
+
+# XGboost model
+model = XGBClassifier(
+    n_estimators=20,
+    max_depth=3,
+    learning_rate=0.1,
+    subsample=0.8,
+    colsample_bytree=0.8,
+    use_label_encoder=False,
+    eval_metric='logloss',
+    random_state=20
+)
+
+# List to keep accuracies
+accuracies_JSS_means_x = []
+
+# Cross validation loop
+for train_idx, test_idx in kf_x.split(X):
+    X_train, X_test = X[train_idx], X[test_idx]
+    y_train, y_test = y_encoded[train_idx], y_encoded[test_idx]
+    
+    model.fit(X_train, y_train)
+    pred = model.predict(X_test)
+    accuracies_JSS_means_x.append(accuracy_score(y_test, pred))
+
+# Show results
+print(f'Average accuracy k-fold CV: {np.mean(accuracies_JSS_means_x):.2f}')
+accuracies_JSS_means_x
+```
+
+Features importance:
+
+```{python}
+# Data frame
+importances = model_cesium.feature_importances_
+feat_importances = pd.Series(importances, index=fset_cesium.columns)
+
+# Order from most to least important
+feat_importances = feat_importances.sort_values(ascending=False)
+
+# Show the most relevant
+print(feat_importances)
+top4_features = feat_importances.head(4).index.tolist()
+
+# Bar plot
+plt.figure(figsize=(12,6))
+feat_importances.plot(kind='bar')
+plt.title('Features importance')
+plt.xticks(rotation=45)
+plt.tight_layout()
+plt.show()
+
+```
+
+```{python, eval = FALSE}
+top4_features
+```
+
+##### Visualization
+
+```{python, eval = FALSE, fig.width = 7, fig.height = 6}
+# Prepare the data
+fset_cesium.columns = ['_'.join(map(str, col)).strip('_') if isinstance(col, tuple) else col for col in fset_cesium.columns.values]
+fset_cesium['condition'] = conditions
+
+# Pairplot
+sns.pairplot(data=fset_cesium, hue="condition")
+
+# Legend
+plt.legend(loc='center left', bbox_to_anchor=(1, 1.5))  
+
+plt.tight_layout()  
+plt.show()
+
+# Column selection
+cols = fset_cesium.columns[[9, 6, 3, 0]] 
+plt.figure(figsize = (10,8))
+
+sns.pairplot(data=fset_cesium, vars=cols, hue="condition")
+plt.suptitle("JSS_mean model", fontsize=12)
+# Legend
+plt.legend(loc='center left', bbox_to_anchor=(1.75, 0.2))
+
+#Adjust labels
+plt.subplots_adjust(right=0.5) 
+
+#Adjust axis labels
+plt.tick_params(axis='both', which='minor', labelsize=6)
+
+plt.tight_layout()
+plt.show()
+
+```
+
+```{python, eval = FALSE}
+# Top 3 features
+top3_features = [f"{feat[0]}_{feat[1]}" for feat in feat_importances.head(3).index.tolist()]
+print(top3_features)  
+
+# Coding conditions as numbers
+le = LabelEncoder()
+fset_cesium['condition_encoded'] = le.fit_transform(fset_cesium["condition"])
+
+# 3D plot
+fig = px.scatter_3d(
+    fset_cesium, 
+    x=top3_features[0], 
+    y=top3_features[1], 
+    z=top3_features[2], 
+    color='condition',  
+    color_discrete_map={'wake': 'blue', 'sleep': 'orange', 'swsleep': 'green', 'xenon': 'pink', 'propofol': 'magenta'}, 
+    title="3D distribution by conditions",
+    labels={top3_features[0]: top3_features[0], top3_features[1]: top3_features[1], top3_features[2]: top3_features[2]},
+)
+
+
+fig.show()
+
+```
+
+#### Time series analysis (sd). 
+
+```{python}
+# Load data
+EEG_sd = r.JSS_list_sd
+
+# The keys of the dictionaries are extracted.
+samples = list(EEG_sd.keys())
+conditions = np.array([s.split('_')[1] for s in samples])
+patients = np.unique([s.split('_')[0] for s in samples])
+measurements = list(EEG_sd.values())
+times = [np.arange(len(m)) for m in measurements]
+dict_EEG_sd = {"samples": samples,
+  "measurements": measurements,
+  "times": times,
+  "conditions": conditions,
+  "patients": patients}
+  
+type(dict_EEG_sd)
+dict_EEG_sd.keys()
+```
+
+##### Features generation
+
+```{python}
+fset_cesium_sd = ft(times = dict_EEG_sd["times"], values = dict_EEG_sd["measurements"], errors = [None] * len(dict_EEG_sd["times"]), features_to_use = features_to_use, scheduler = None)
+fset_cesium_sd.head
+
+X = fset_cesium_sd.values
+y = np.array(dict_EEG_sd["conditions"])
+```
+
+##### Random Forest: The dataset is divided into training and test sets. The model is trained, and its performance is assessed.
+
+```{python}
+kf_sd = KFold(n_splits=3, shuffle=True, random_state=20)
+model_cesium_sd = RandomForestClassifier(n_estimators=7, random_state=20)
+accuracies_JSS_sd = []
+
+for train_idx, test_idx in kf_sd.split(X):
+    X_train, X_test = X[train_idx], X[test_idx]
+    y_train, y_test = y[train_idx], y[test_idx]
+
+    model_cesium_sd.fit(X_train, y_train)
+    pred2 = model_cesium_sd.predict(X_test)
+    accuracies_JSS_sd.append(accuracy_score(y_test, pred2))
+
+print(f'Average accuracy k-fold CV: {np.mean(accuracies_JSS_sd):.2f}')
+accuracies_JSS_sd
+```
+
+##### Additional evaluation metrics are computed.:
+
+```{python}
+kf_JSS_sd = KFold(n_splits=3, shuffle=True, random_state=20)
+model_cesium_JSS_sd = RandomForestClassifier(n_estimators=7, random_state=20)
+
+accuracies_JSS_sd = []
+recalls_JSS_sd = []
+f1s_JSS_sd = []
+roc_aucs_JSS_sd = []
+
+POS_LABEL = 'wake'
+
+for train_idx, test_idx in kf_JSS_sd.split(X):
+    X_train, X_test = X[train_idx], X[test_idx]
+    y_train, y_test = y[train_idx], y[test_idx]
+
+    model_cesium_JSS_sd.fit(X_train, y_train)
+    pred2 = model_cesium_JSS_sd.predict(X_test)
+    prob = model_cesium_JSS_sd.predict_proba(X_test)
+
+    accuracies_JSS_sd.append(accuracy_score(y_test, pred2))
+
+    y_test_binary = np.array(y_test == POS_LABEL, dtype=int)
+    pred_binary = np.array(pred2 == POS_LABEL, dtype=int)
+
+    if np.sum(y_test_binary) > 0:
+        recalls_JSS_sd.append(recall_score(y_test_binary, pred_binary))
+        f1s_JSS_sd.append(f1_score(y_test_binary, pred_binary))
+        class_index = list(model_cesium_JSS_sd.classes_).index(POS_LABEL)
+        roc_aucs_JSS_sd.append(roc_auc_score(y_test_binary, prob[:, class_index]))
+    else:
+        recalls_JSS_sd.append(np.nan)
+        f1s_JSS_sd.append(np.nan)
+        roc_aucs_JSS_sd.append(np.nan)
+
+# Resultados promedio
+print(f"Average accuracy k-fold CV: {np.mean(accuracies_JSS_sd):.2f}")
+print(f"Recall (wake vs resto): {np.nanmean(recalls_JSS_sd):.2f}")
+print(f"F1-score (wake vs resto): {np.nanmean(f1s_JSS_sd):.2f}")
+print(f"ROC-AUC (wake vs resto): {np.nanmean(roc_aucs_JSS_sd):.2f}")
+
+```
+
+##### ROC
+
+```{python}
+# Generate binary labels: assign 1 to 'wake' and 0 to all other conditions
+y_test_binary = (y_test == POS_LABEL).astype(int)
+
+# 'wake' index
+class_index = list(model_cesium_JSS_t_sd.classes_).index(POS_LABEL)
+
+# Estimated probabilities for 'wake'
+y_score = prob[:, class_index]
+
+# FPR, TPR y thresholds
+fpr, tpr, thresholds = roc_curve(y_test_binary, y_score)
+roc_auc = auc(fpr, tpr)
+
+# ROC
+plt.figure(figsize=(6, 5))
+plt.plot(fpr, tpr, color='darkorange', lw=2, label=f'ROC curve (AUC = {roc_auc:.2f})')
+plt.plot([0, 1], [0, 1], color='navy', lw=1, linestyle='--')
+plt.xlabel('False Positive Rate (1 - Specificity)')
+plt.ylabel('True Positive Rate (Sensitivity)')
+plt.title(f'ROC Curve JSS_sd: {POS_LABEL}')
+plt.legend(loc='lower right')
+plt.grid(True)
+plt.tight_layout()
+plt.show()
+```
+
+
+##### *XGboost* classification
+
+```{python}
+# Label codification
+le_sd = LabelEncoder()
+y_encoded = le_sd.fit_transform(y)
+
+# K-fold Cross Validation
+kf_sd_x = KFold(n_splits=3, shuffle=True, random_state=20)
+
+# XGboost model
+model_sd = XGBClassifier(
+    n_estimators=4,
+    max_depth=3,
+    learning_rate=0.1,
+    subsample=0.8,
+    colsample_bytree=0.8,
+    use_label_encoder=False,
+    eval_metric='logloss',
+    random_state=20
+)
+
+# List to keep accuracies
+accuracies_JSS_sd_x = []
+
+# Cross validation loop
+for train_idx, test_idx in kf_sd_x.split(X):
+    X_train, X_test = X[train_idx], X[test_idx]
+    y_train, y_test = y_encoded[train_idx], y_encoded[test_idx]
+    
+    model_sd.fit(X_train, y_train)
+    pred = model_sd.predict(X_test)
+    accuracies_JSS_sd_x.append(accuracy_score(y_test, pred))
+
+# Show results
+print(f'Average accuracy k-fold CV: {np.mean(accuracies_JSS_sd_x):.2f}')
+accuracies_JSS_sd_x
+```
+
+Features importance:
+
+```{python, eval = FALSE}
+# Data frame
+importances = model_cesium_sd.feature_importances_
+feat_importances = pd.Series(importances, index=fset_cesium_sd.columns)
+# Order from most to least important
+feat_importances = feat_importances.sort_values(ascending=False)
+
+# Show the most relevant
+print(feat_importances)
+top4_features_sd = feat_importances.head(4).index.tolist()
+
+# Bar plot
+plt.figure(figsize=(12,6))
+feat_importances.plot(kind='bar')
+plt.title('Features importance')
+plt.xticks(rotation=45)
+plt.tight_layout()
+plt.show()
+
+```
+
+```{python, eval=FALSE}
+top4_features_sd
+```
+
+##### Visualization
+
+```{python, eval = FALSE, fig.width = 7, fig.height = 6}
+fset_cesium_sd.columns = ['_'.join(map(str, col)).strip('_') if isinstance(col, tuple) else col for col in fset_cesium_sd.columns.values]
+fset_cesium_sd['condition'] = conditions
+
+# Pairplot
+sns.pairplot(data=fset_cesium_sd, hue="condition")
+plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))  
+plt.tight_layout()  
+plt.show()
+
+# Adjust column selection
+cols = fset_cesium_sd.columns[[6, 9, 7, 4]] 
+plt.figure(figsize=(10, 8)) 
+sns.pairplot(data=fset_cesium_sd, vars=cols, hue="condition")
+plt.suptitle("JSS_sd model", fontsize=12)
+# Adjust size
+plt.legend(loc='center left', bbox_to_anchor=(1.65, 0))
+plt.subplots_adjust(right=0.85, top=0.95) 
+plt.tick_params(axis='both', which='major', labelsize=6)  
+plt.xticks(rotation=90)  
+plt.yticks(rotation=90)  
+#plt.tight_layout()
+plt.show()
+
+
+```
+
+```{python, eval = FALSE}
+# Top 3 features 
+top3_feats_tuples = feat_importances.head(3).index.tolist()
+
+# Coding conditions as numbers
+le = LabelEncoder()
+fset_cesium_sd['condition_encoded'] = le.fit_transform(fset_cesium_sd["condition"])
+
+# Rename columns
+top3_feats_str = ['_'.join(map(str, tup)) for tup in top3_feats_tuples]
+
+# 3D plot 
+fig = px.scatter_3d(
+    fset_cesium_sd,
+    x=top3_feats_str[0],
+    y=top3_feats_str[1],
+    z=top3_feats_str[2],
+    color='condition',
+    color_discrete_map={
+        'wake': 'blue',
+        'sleep': 'orange',
+        'swsleep': 'green',
+        'xenon': 'pink',
+        'propofol': 'magenta'
+    },
+    title="JSS_sd 3D",
+    labels={
+        top3_feats_str[0]: top3_feats_tuples[0][0],
+        top3_feats_str[1]: top3_feats_tuples[1][0],
+        top3_feats_str[2]: top3_feats_tuples[2][0]
+    }
+)
+
+fig.show()
+
+```
+
+### 2º analysis J
+
+
+
+```{r, message=FALSE}
+# Only J matrices (previous)
+## current_list
+```
+
+#### Mean
+
+```{r, message=FALSE}
+# Means are obtained
+current_means = lapply(current_list, function(c){colMeans(c, na.rm = TRUE)})
+#load("current_means.RData")
+
+# Time series visualization for each patient and condition
+
+#for(i in seq_along(current_means)){
+ # plot(1:107, current_means[[i]], type = "l",
+  #     col = "blue", xlab = "time", ylab = "value",
+   #    main = names(current_means)[i])
+#  Sys.sleep(1)  
+#}
+#save(current_means, file = "current_means.RData")
+```
+
+#### Standard deviation
+
+Standard deviations are computed across sources for each time point t in every matrix.:
+
+```{r, message=FALSE}
+# The standard deviation is calculated column-wise, yielding the value at each time instant along the sequence.
+
+current_sd <- lapply(current_list, function(m) apply(m, 2, sd, na.rm = TRUE))
+
+#load("current_sd.RData")
+
+# Time series visualization for each patient and condition
+
+#for(i in seq_along(current_sd)){
+ # plot(1:107, current_sd[[i]], type = "l",
+  #     col = "blue", xlab = "time", ylab = "value",
+   #    main = names(current_sd)[i])
+  #Sys.sleep(1)  
+#}
+#save(current_sd, file = "current_sd.RData")
+```
+
+#### Time series analysis (means)
+
+We adapt the EEG data to the Python environment by creating a dictionary for subsequent analysis. To do this, we first need to store the variables generated in R within the Python workspace.
+
+```{python}
+# Load data
+EEG_J = r.current_means
+
+# The keys of the dictionaries are extracted.
+samples = list(EEG_J.keys())
+conditions = np.array([s.split('_')[1] for s in samples])
+patients = np.unique([s.split('_')[0] for s in samples])
+measurements = list(EEG_J.values())
+times = [np.arange(len(m)) for m in measurements]
+dict_EEG_J = {"samples": samples,
+  "measurements": measurements,
+  "times": times,
+  "conditions": conditions,
+  "patients": patients}
+  
+type(dict_EEG_J)
+dict_EEG_J.keys()
+```
+
+##### Features generation
+
+```{python}
+fset_cesium_J = ft(times = dict_EEG_J["times"], values = dict_EEG_J["measurements"], errors = [None] * len(dict_EEG_J["times"]), features_to_use = features_to_use, scheduler = None)
+fset_cesium_J.head
+
+X = fset_cesium_J.values
+y = np.array(dict_EEG_J["conditions"])
+```
+
+##### Random Forest: The dataset is divided into training and test sets. The model is trained, and its performance is assessed.
+
+```{python}
+kf_J = KFold(n_splits=3, shuffle=True, random_state=10)
+model_cesium_J = RandomForestClassifier(n_estimators=11, random_state=12)
+accuracies_J_means = []
+
+for train_idx, test_idx in kf_J.split(X):
+    X_train, X_test = X[train_idx], X[test_idx]
+    y_train, y_test = y[train_idx], y[test_idx]
+
+    model_cesium_J.fit(X_train, y_train)
+    pred = model_cesium_J.predict(X_test)
+    accuracies_J_means.append(accuracy_score(y_test, pred))
+
+print(f'Average accuracy k-fold CV: {np.mean(accuracies_J_means):.2f}')
+accuracies_J_means
+```
+
+##### *XGboost* classification
+
+```{python}
+# Label codification
+le_J = LabelEncoder()
+y_encoded = le_J.fit_transform(y)
+
+# K-fold Cross Validation
+kf_J = KFold(n_splits=9, shuffle=True, random_state=7)
+
+# XGboost model
+model_J = XGBClassifier(
+    n_estimators=20,
+    max_depth=4,
+    learning_rate=0.1,
+    subsample=0.8,
+    colsample_bytree=0.8,
+    use_label_encoder=False,
+    eval_metric='logloss',
+    random_state=13
+)
+
+# List to keep accuracies
+accuracies_J_means_x = []
+
+# Cross validation loop
+for train_idx, test_idx in kf_J.split(X):
+    X_train, X_test = X[train_idx], X[test_idx]
+    y_train, y_test = y_encoded[train_idx], y_encoded[test_idx]
+    
+    model_J.fit(X_train, y_train)
+    pred_J = model_J.predict(X_test)
+    accuracies_J_means_x.append(accuracy_score(y_test, pred_J))
+
+# Show results
+print(f'Average accuracy k-fold CV: {np.mean(accuracies_J_means_x):.2f}')
+accuracies_J_means_x
+```
+
+Features importance:
+
+```{python, eval = FALSE}
+# Data frame
+importances = model_cesium_J.feature_importances_
+feat_importances = pd.Series(importances, index=fset_cesium_J.columns)
+# Order from most to least important
+feat_importances = feat_importances.sort_values(ascending=False)
+
+# Show the most relevant
+print(feat_importances)
+top4_features = feat_importances.head(4).index.tolist()
+
+# Bar plot
+plt.figure(figsize=(12,6))
+feat_importances.plot(kind='bar')
+plt.title('Features importance')
+plt.xticks(rotation=45)
+plt.tight_layout()
+plt.show()
+
+```
+
+##### Visualization
+
+```{python, eval = FALSE}
+fset_cesium_J.columns = ['_'.join(map(str, col)).strip('_') if isinstance(col, tuple) else col for col in fset_cesium_J.columns.values]
+fset_cesium_J['condition'] = conditions
+sns.pairplot(data=fset_cesium_J, hue="condition")
+plt.show()
+cols = fset_cesium_J.columns[[3, 8, 7, 6]] 
+plt.figure()
+plt.legend()
+sns.pairplot(data=fset_cesium_J, vars=cols,  hue="condition")
+plt.suptitle("J_mean model", fontsize=12)
+# Legend
+plt.legend(loc='center left', bbox_to_anchor=(1.75, 0))
+
+#Adjust labels
+plt.subplots_adjust(right=0.85, top = 0.95) 
+
+#Adjust axis labels
+plt.tick_params(axis='both', which='minor', labelsize=1)
+
+plt.tight_layout()
+plt.show()
+```
+
+#### Time series analysis (sd)
+
+```{python}
+# Load data sd
+EEG_J_sd = r.current_sd
+
+# The keys of the dictionaries are extracted.
+samples = list(EEG_J_sd.keys())
+conditions = np.array([s.split('_')[1] for s in samples])
+patients = np.unique([s.split('_')[0] for s in samples])
+measurements = list(EEG_J_sd.values())
+times = [np.arange(len(m)) for m in measurements]
+dict_EEG_J_sd = {"samples": samples,
+  "measurements": measurements,
+  "times": times,
+  "conditions": conditions,
+  "patients": patients}
+  
+type(dict_EEG_J_sd)
+dict_EEG_J_sd.keys()
+```
+
+##### Features generation
+
+```{python}
+fset_cesium_J_sd = ft(times = dict_EEG_J_sd["times"], values = dict_EEG_J_sd["measurements"], errors = [None] * len(dict_EEG_J_sd["times"]), features_to_use = features_to_use, scheduler = None)
+fset_cesium_J_sd.head
+
+X = fset_cesium_J_sd.values
+y = np.array(dict_EEG_J_sd["conditions"])
+```
+
+##### Random Forest: The dataset is divided into training and test sets. The model is trained, and its performance is assessed.
+
+```{python}
+kf_J_sd = KFold(n_splits=5, shuffle=True, random_state=11)
+model_cesium_J_sd = RandomForestClassifier(n_estimators=35, random_state=7)
+accuracies_J_sd = []
+
+for train_idx, test_idx in kf_J_sd.split(X):
+    X_train, X_test = X[train_idx], X[test_idx]
+    y_train, y_test = y[train_idx], y[test_idx]
+
+    model_cesium_J_sd.fit(X_train, y_train)
+    pred2 = model_cesium_J_sd.predict(X_test)
+    accuracies_J_sd.append(accuracy_score(y_test, pred2))
+
+print(f'Average accuracy k-fold CV: {np.mean(accuracies_J_sd):.2f}')
+accuracies_J_sd
+```
+
+##### *XGboost* classification
+
+```{python}
+# Label codification
+le_J_sd = LabelEncoder()
+y_encoded = le_J_sd.fit_transform(y)
+
+# K-fold Cross Validation
+kf_J_sd_x = KFold(n_splits=9, shuffle=True, random_state=20)
+
+# XGboost model
+model_J_sd = XGBClassifier(
+    n_estimators=20,
+    max_depth=3,
+    learning_rate=0.1,
+    subsample=0.8,
+    colsample_bytree=0.8,
+    use_label_encoder=False,
+    eval_metric='logloss',
+    random_state=20
+)
+
+# List to keep accuracies
+accuracies_J_sd_x = []
+
+# Cross validation loop
+for train_idx, test_idx in kf_J_sd_x.split(X):
+    X_train, X_test = X[train_idx], X[test_idx]
+    y_train, y_test = y_encoded[train_idx], y_encoded[test_idx]
+    
+    model_J_sd.fit(X_train, y_train)
+    pred = model_J_sd.predict(X_test)
+    accuracies_J_sd_x.append(accuracy_score(y_test, pred))
+
+# Show results
+print(f'Average accuracy k-fold CV: {np.mean(accuracies_J_sd_x):.2f}')
+accuracies_J_sd_x
+```
+
+Features importance:
+
+```{python, eval = FALSE}
+# Data frame
+importances = model_cesium_J_sd.feature_importances_
+feat_importances = pd.Series(importances, index=fset_cesium_J_sd.columns)
+# Order from most to least important
+feat_importances = feat_importances.sort_values(ascending=False)
+
+# Show the most relevant
+print(feat_importances)
+
+# Bar plot
+plt.figure(figsize=(12,6))
+feat_importances.plot(kind='bar')
+plt.title('Features importance')
+plt.xticks(rotation=45)
+plt.tight_layout()
+plt.show()
+
+```
+
+##### Visualization
+
+```{python, eval = FALSE}
+fset_cesium_J_sd.columns = ['_'.join(map(str, col)).strip('_') if isinstance(col, tuple) else col for col in fset_cesium_J_sd.columns.values]
+fset_cesium_J_sd['condition'] = conditions
+sns.pairplot(data=fset_cesium_J_sd, hue="condition")
+plt.show()
+cols = fset_cesium_J_sd.columns[[0, 1, 2, 3]] 
+plt.figure()
+sns.pairplot(data=fset_cesium_J_sd, vars=cols,  hue="condition")
+plt.suptitle("J_sd model", fontsize=12)
+plt.show()
+```
+
+### 3º analysis SS
+
+```{r, message=FALSE}
+# Only SS matrices (previous)
+## ss_list
+```
+
+#### Mean
+
+```{r, message=FALSE}
+# Means are obtained
+
+ss_means = lapply(ss_list, function(c){colMeans(c, na.rm = TRUE)})
+#load("ss_means.RData")
+
+# Time series visualization for each patient and condition
+
+#for(i in seq_along(ss_means)){
+ # plot(1:107, ss_means[[i]], type = "l",
+  #     col = "blue", xlab = "time", ylab = "value",
+   #    main = names(ss_means)[i])
+  #Sys.sleep(1)  
+#}
+#save(ss_means, file = "ss_means.RData")
+```
+
+#### Standard deviation
+
+Standard deviations are computed across sources for each time point t in every matrix.:
+
+```{r, message=FALSE}
+# The standard deviation is calculated column-wise, yielding the value at each time instant along the sequence.
+
+ss_sd <- lapply(ss_list, function(m) apply(m, 2, sd, na.rm = TRUE))
+#load("ss_sd.RData")
+
+# Time series visualization for each patient and condition
+
+#for(i in seq_along(ss_sd)){
+ # plot(1:107, ss_sd[[i]], type = "l",
+  #     col = "blue", xlab = "time", ylab = "value",
+   #    main = names(ss_sd)[i])
+  #Sys.sleep(1)  
+#}
+#save(ss_sd, file = "ss_sd.RData")
+```
+
+#### Time series analysis (means)
+
+We adapt the EEG data to the Python environment by generating a dictionary for further analysis. To achieve this, we must first save the variables generated in R into the Python workspace.
+
+```{python}
+# Load data
+EEG_SS = r.ss_means
+
+# The keys of the dictionaries are extracted.
+samples = list(EEG_SS.keys())
+conditions = np.array([s.split('_')[1] for s in samples])
+patients = np.unique([s.split('_')[0] for s in samples])
+measurements = list(EEG_SS.values())
+times = [np.arange(len(m)) for m in measurements]
+dict_EEG_SS = {"samples": samples,
+  "measurements": measurements,
+  "times": times,
+  "conditions": conditions,
+  "patients": patients}
+  
+type(dict_EEG_SS)
+dict_EEG_SS.keys()
+```
+
+##### Features generation
+
+```{python}
+fset_cesium_SS = ft(times = dict_EEG_SS["times"], values = dict_EEG_SS["measurements"], errors = [None] * len(dict_EEG_SS["times"]), features_to_use = features_to_use, scheduler = None)
+fset_cesium_SS.head
+
+X = fset_cesium_SS.values
+y = np.array(dict_EEG_SS["conditions"])
+```
+
+##### Random Forest: The dataset is divided into training and test sets. The model is trained, and its performance is assessed.
+
+```{python}
+kf_SS = KFold(n_splits=9, shuffle=True, random_state=20)
+model_cesium_SS = RandomForestClassifier(n_estimators=8, random_state=20)
+accuracies_SS_means = []
+
+for train_idx, test_idx in kf_SS.split(X):
+    X_train, X_test = X[train_idx], X[test_idx]
+    y_train, y_test = y[train_idx], y[test_idx]
+
+    model_cesium_SS.fit(X_train, y_train)
+    pred2_SS = model_cesium_SS.predict(X_test)
+    accuracies_SS_means.append(accuracy_score(y_test, pred2_SS))
+
+print(f'Average accuracy k-fold CV: {np.mean(accuracies_SS_means):.2f}')
+accuracies_SS_means
+```
+
+##### Additional evaluation metrics are computed.:
+
+```{python}
+kf_SS_means = KFold(n_splits=9, shuffle=True, random_state=20)
+model_cesium_SS_means = RandomForestClassifier(n_estimators=8, random_state=20)
+
+accuracies_SS_means = []
+recalls_SS_means = []
+f1s_SS_means = []
+roc_aucs_SS_means = []
+
+POS_LABEL = 'wake'
+
+for train_idx, test_idx in kf_SS_means.split(X):
+    X_train, X_test = X[train_idx], X[test_idx]
+    y_train, y_test = y[train_idx], y[test_idx]
+
+    model_cesium_SS_means.fit(X_train, y_train)
+    pred2 = model_cesium_SS_means.predict(X_test)
+    prob = model_cesium_SS_means.predict_proba(X_test)
+
+    accuracies_SS_means.append(accuracy_score(y_test, pred2))
+
+    y_test_binary = np.array(y_test == POS_LABEL, dtype=int)
+    pred_binary = np.array(pred2 == POS_LABEL, dtype=int)
+
+    if np.sum(y_test_binary) > 0:
+        recalls_SS_means.append(recall_score(y_test_binary, pred_binary))
+        f1s_SS_means.append(f1_score(y_test_binary, pred_binary))
+        class_index = list(model_cesium_SS_means.classes_).index(POS_LABEL)
+        roc_aucs_SS_means.append(roc_auc_score(y_test_binary, prob[:, class_index]))
+    else:
+        recalls_SS_means.append(np.nan)
+        f1s_SS_means.append(np.nan)
+        roc_aucs_SS_means.append(np.nan)
+
+# Resultados promedio
+print(f"Average accuracy k-fold CV: {np.mean(accuracies_SS_means):.2f}")
+print(f"Recall (wake vs resto): {np.nanmean(recalls_SS_means):.2f}")
+print(f"F1-score (wake vs resto): {np.nanmean(f1s_SS_means):.2f}")
+print(f"ROC-AUC (wake vs resto): {np.nanmean(roc_aucs_SS_means):.2f}")
+
+```
+
+##### ROC
+
+```{python}
+# Generate binary labels: assign 1 to 'wake' and 0 to all other conditions.
+y_test_binary = (y_test == POS_LABEL).astype(int)
+
+# 'wake' index
+class_index = list(model_cesium_JSS_t_sd.classes_).index(POS_LABEL)
+
+# Estimated probabilities for 'wake'
+y_score = prob[:, class_index]
+
+# FPR, TPR y thresholds
+fpr, tpr, thresholds = roc_curve(y_test_binary, y_score)
+roc_auc = auc(fpr, tpr)
+
+# ROC
+plt.figure(figsize=(6, 5))
+plt.plot(fpr, tpr, color='darkorange', lw=2, label=f'ROC curve (AUC = {roc_auc:.2f})')
+plt.plot([0, 1], [0, 1], color='navy', lw=1, linestyle='--')
+plt.xlabel('False Positive Rate (1 - Specificity)')
+plt.ylabel('True Positive Rate (Sensitivity)')
+plt.title(f'ROC Curve SS_means: {POS_LABEL}')
+plt.legend(loc='lower right')
+plt.grid(True)
+plt.tight_layout()
+plt.show()
+```
+
+##### *XGboost* classification
+
+```{python}
+# Label codification
+le_SS = LabelEncoder()
+y_encoded_SS = le_SS.fit_transform(y)
+
+# K-fold Cross Validation
+kf_SS_x = KFold(n_splits=8, shuffle=True, random_state=50)
+
+# XGboost model
+model_SS = XGBClassifier(
+    n_estimators=25,
+    max_depth=4,
+    learning_rate=0.1,
+    subsample=0.8,
+    colsample_bytree=0.8,
+    use_label_encoder=False,
+    eval_metric='logloss',
+    random_state=20
+)
+
+# List to keep accuracies
+accuracies_SS_means_x = []
+
+# Cross validation loop
+for train_idx, test_idx in kf_SS_x.split(X):
+    X_train, X_test = X[train_idx], X[test_idx]
+    y_train, y_test = y_encoded_SS[train_idx], y_encoded_SS[test_idx]
+    
+    model_SS.fit(X_train, y_train)
+    pred_SS = model_SS.predict(X_test)
+    accuracies_SS_means_x.append(accuracy_score(y_test, pred_SS))
+
+# Show results
+print(f'Average accuracy k-fold CV: {np.mean(accuracies_SS_means_x):.2f}')
+accuracies_SS_means_x
+```
+
+Features importance:
+
+```{python, eval = FALSE}
+# Data frame
+importances = model_cesium_SS.feature_importances_
+feat_importances = pd.Series(importances, index=fset_cesium_SS.columns)
+
+# Order from most to least important
+feat_importances = feat_importances.sort_values(ascending=False)
+
+# Show the most relevant
+print(feat_importances)
+top4_features_SS_means = feat_importances.head(4).index.tolist()
+
+# Bar plot
+plt.figure(figsize=(12,6))
+feat_importances.plot(kind='bar')
+plt.title('Features importance')
+plt.xticks(rotation=45)
+plt.tight_layout()
+plt.show()
+
+```
+
+```{python}
+top4_features_SS_means
+```
+
+##### Visualization
+
+```{python, eval = FALSE, fig.width = 7, fig.height = 6}
+fset_cesium_SS.columns = ['_'.join(map(str, col)).strip('_') if isinstance(col, tuple) else col for col in fset_cesium_SS.columns.values]
+fset_cesium_SS['condition'] = conditions
+sns.pairplot(data=fset_cesium_SS, hue="condition")
+plt.show()
+cols = fset_cesium_SS.columns[[0, 5, 2, 8]] 
+plt.figure()
+sns.pairplot(data=fset_cesium_SS, vars=cols,  hue="condition")
+plt.suptitle("SS_means model", fontsize=12)
+plt.subplots_adjust(right=0.85, top=0.95) 
+plt.show()
+```
+
+```{python, eval = FALSE}
+# Top 3 features 
+top3_feats_tuples = feat_importances.head(3).index.tolist()
+
+# Coding conditions as numbers
+le = LabelEncoder()
+fset_cesium_SS['condition_encoded'] = le.fit_transform(fset_cesium_SS["condition"])
+
+# Rename columns
+top3_feats_str = ['_'.join(map(str, tup)) for tup in top3_feats_tuples]
+
+# 3D plot 
+fig = px.scatter_3d(
+    fset_cesium_SS,
+    x=top3_feats_str[0],
+    y=top3_feats_str[1],
+    z=top3_feats_str[2],
+    color='condition',
+    color_discrete_map={
+        'wake': 'blue',
+        'sleep': 'orange',
+        'swsleep': 'green',
+        'xenon': 'pink',
+        'propofol': 'magenta'
+    },
+    title="SS_means 3D",
+    labels={
+        top3_feats_str[0]: top3_feats_tuples[0][0],
+        top3_feats_str[1]: top3_feats_tuples[1][0],
+        top3_feats_str[2]: top3_feats_tuples[2][0]
+    }
+)
+
+fig.show()
+
+```
+
+#### Time series analysis (sd)
+
+```{python}
+# Load data sd
+EEG_SS_sd = r.ss_sd
+
+# The keys of the dictionaries are extracted.
+samples = list(EEG_SS_sd.keys())
+conditions = np.array([s.split('_')[1] for s in samples])
+patients = np.unique([s.split('_')[0] for s in samples])
+measurements = list(EEG_sd.values())
+times = [np.arange(len(m)) for m in measurements]
+dict_EEG_SS_sd = {"samples": samples,
+  "measurements": measurements,
+  "times": times,
+  "conditions": conditions,
+  "patients": patients}
+  
+type(dict_EEG_SS_sd)
+dict_EEG_SS_sd.keys()
+```
+
+##### Features generation
+
+```{python}
+fset_cesium_SS_sd = ft(times = dict_EEG_SS_sd["times"], values = dict_EEG_SS_sd["measurements"], errors = [None] * len(dict_EEG_SS_sd["times"]), features_to_use = features_to_use, scheduler = None)
+fset_cesium_SS_sd.head
+
+X = fset_cesium_SS_sd.values
+y = np.array(dict_EEG_SS_sd["conditions"])
+```
+
+##### Random Forest: The dataset is divided into training and test sets. The model is trained, and its performance is assessed.
+
+```{python}
+kf_SS_sd = KFold(n_splits=3, shuffle=True, random_state=20)
+model_cesium_SS_sd = RandomForestClassifier(n_estimators=8, random_state=20)
+accuracies_SS_sd = []
+
+for train_idx, test_idx in kf_SS_sd.split(X):
+    X_train, X_test = X[train_idx], X[test_idx]
+    y_train, y_test = y[train_idx], y[test_idx]
+
+    model_cesium_SS_sd.fit(X_train, y_train)
+    pred2 = model_cesium_SS_sd.predict(X_test)
+    accuracies_SS_sd.append(accuracy_score(y_test, pred2))
+
+print(f'Average accuracy k-fold CV: {np.mean(accuracies_SS_sd):.2f}')
+accuracies_SS_sd
+
+```
+
+##### Additional evaluation metrics are computed.:
+
+```{python}
+kf_SS_sd = KFold(n_splits=3, shuffle=True, random_state=20)
+model_cesium_SS_sd = RandomForestClassifier(n_estimators=8, random_state=20)
+
+accuracies_SS_sd = []
+recalls_SS_sd = []
+f1s_SS_sd = []
+roc_aucs_SS_sd = []
+
+POS_LABEL = 'wake'
+
+for train_idx, test_idx in kf_SS_sd.split(X):
+    X_train, X_test = X[train_idx], X[test_idx]
+    y_train, y_test = y[train_idx], y[test_idx]
+
+    model_cesium_SS_sd.fit(X_train, y_train)
+    pred2 = model_cesium_SS_sd.predict(X_test)
+    prob = model_cesium_SS_sd.predict_proba(X_test)
+
+    accuracies_SS_sd.append(accuracy_score(y_test, pred2))
+
+    y_test_binary = np.array(y_test == POS_LABEL, dtype=int)
+    pred_binary = np.array(pred2 == POS_LABEL, dtype=int)
+
+    if np.sum(y_test_binary) > 0:
+        recalls_SS_sd.append(recall_score(y_test_binary, pred_binary))
+        f1s_SS_sd.append(f1_score(y_test_binary, pred_binary))
+        class_index = list(model_cesium_SS_sd.classes_).index(POS_LABEL)
+        roc_aucs_SS_sd.append(roc_auc_score(y_test_binary, prob[:, class_index]))
+    else:
+        recalls_SS_sd.append(np.nan)
+        f1s_SS_sd.append(np.nan)
+        roc_aucs_SS_sd.append(np.nan)
+
+# Resultados promedio
+print(f"Average accuracy k-fold CV: {np.mean(accuracies_SS_sd):.2f}")
+print(f"Recall (wake vs resto): {np.nanmean(recalls_SS_sd):.2f}")
+print(f"F1-score (wake vs resto): {np.nanmean(f1s_SS_sd):.2f}")
+print(f"ROC-AUC (wake vs resto): {np.nanmean(roc_aucs_SS_sd):.2f}")
+
+```
+
+##### ROC
+
+```{python}
+# Generate binary labels: assign 1 to 'wake' and 0 to all other conditions.
+y_test_binary = (y_test == POS_LABEL).astype(int)
+
+# 'wake' index
+class_index = list(model_cesium_JSS_t_sd.classes_).index(POS_LABEL)
+
+# Estimated probabilities for 'wake'
+y_score = prob[:, class_index]
+
+# FPR, TPR y thresholds
+fpr, tpr, thresholds = roc_curve(y_test_binary, y_score)
+roc_auc = auc(fpr, tpr)
+
+# ROC
+plt.figure(figsize=(6, 5))
+plt.plot(fpr, tpr, color='darkorange', lw=2, label=f'ROC curve (AUC = {roc_auc:.2f})')
+plt.plot([0, 1], [0, 1], color='navy', lw=1, linestyle='--')
+plt.xlabel('False Positive Rate (1 - Specificity)')
+plt.ylabel('True Positive Rate (Sensitivity)')
+plt.title(f'ROC Curve for class: {POS_LABEL}')
+plt.legend(loc='lower right')
+plt.grid(True)
+plt.tight_layout()
+plt.show()
+```
+
+##### *XGboost* classification
+
+```{python}
+# Label codification
+le_SS_sd = LabelEncoder()
+y_encoded = le_SS_sd.fit_transform(y)
+
+# K-fold Cross Validation
+kf_SS_sd_x = KFold(n_splits=7
+, shuffle=True, random_state=20)
+
+# XGboost model
+model_SS_sd = XGBClassifier(
+    n_estimators=8,
+    max_depth=4,
+    learning_rate=0.1,
+    subsample=0.8,
+    colsample_bytree=0.8,
+    use_label_encoder=False,
+    eval_metric='logloss',
+    random_state=20
+)
+
+# List to keep accuracies
+accuracies_SS_sd_x = []
+
+# Cross validation loop
+for train_idx, test_idx in kf_SS_sd_x.split(X):
+    X_train, X_test = X[train_idx], X[test_idx]
+    y_train, y_test = y_encoded[train_idx], y_encoded[test_idx]
+    
+    model_SS_sd.fit(X_train, y_train)
+    pred = model_SS_sd.predict(X_test)
+    accuracies_SS_sd_x.append(accuracy_score(y_test, pred))
+
+# Show results
+print(f'Average accuracy k-fold CV: {np.mean(accuracies_SS_sd_x):.2f}')
+accuracies_SS_sd_x
+```
+
+Features importance:
+
+```{python, eval = FALSE}
+# Data frame
+importances = model_cesium_SS_sd.feature_importances_
+feat_importances = pd.Series(importances, index=fset_cesium_SS_sd.columns)
+# Order from most to least important
+feat_importances = feat_importances.sort_values(ascending=False)
+
+# Show the most relevant
+print(feat_importances)
+top4_features_SS_sd = feat_importances.head(4).index.tolist()
+
+# Bar plot
+plt.figure(figsize=(12,6))
+feat_importances.plot(kind='bar')
+plt.title('Features importance')
+plt.xticks(rotation=45)
+plt.tight_layout()
+plt.show()
+
+```
+
+```{python, eval = FALSE}
+top4_features_SS_sd
+```
+
+##### Visualization
+
+```{python, eval = FALSE}
+fset_cesium_SS_sd.columns = ['_'.join(map(str, col)).strip('_') if isinstance(col, tuple) else col for col in fset_cesium_SS_sd.columns.values]
+fset_cesium_SS_sd['condition'] = conditions
+sns.pairplot(data=fset_cesium_SS_sd, hue="condition")
+plt.show()
+cols = fset_cesium_SS_sd.columns[[5, 10, 4, 7]] 
+plt.figure()
+plt.legend()
+sns.pairplot(data=fset_cesium_SS_sd, vars=cols,  hue="condition")
+plt.suptitle("SS_sd model", fontsize=12)
+# Legend
+plt.legend(loc='center left', bbox_to_anchor=(1.75, 0))
+
+#Adjust labels
+plt.subplots_adjust(right=0.85, top = 0.95) 
+
+#Adjust axis labels
+plt.tick_params(axis='both', which='minor', labelsize=1)
+
+plt.tight_layout()
+plt.show()
+```
+
+```{python, eval = FALSE}
+# Top 3 features 
+top3_feats_tuples = feat_importances.head(3).index.tolist()
+
+# Coding conditions as numbers
+le = LabelEncoder()
+fset_cesium_SS_sd['condition_encoded'] = le.fit_transform(fset_cesium_SS_sd["condition"])
+
+# Rename columns
+top3_feats_str = ['_'.join(map(str, tup)) for tup in top3_feats_tuples]
+
+# 3D plot 
+fig = px.scatter_3d(
+    fset_cesium_SS_sd,
+    x=top3_feats_str[0],
+    y=top3_feats_str[1],
+    z=top3_feats_str[2],
+    color='condition',
+    color_discrete_map={
+        'wake': 'blue',
+        'sleep': 'orange',
+        'swsleep': 'green',
+        'xenon': 'pink',
+        'propofol': 'magenta'
+    },
+    title="3D distribution by conditions",
+    labels={
+        top3_feats_str[0]: top3_feats_tuples[0][0],
+        top3_feats_str[1]: top3_feats_tuples[1][0],
+        top3_feats_str[2]: top3_feats_tuples[2][0]
+    }
+)
+
+fig.show()
+```
+
+## Full range of time analysis
+
+```{r, message=FALSE, eval=FALSE}
+
+load("sessionsTable.RData")
+
+# All current matrices are saved in a list
+
+current_list_t = list()
+ss_list_t = list()
+
+for (i in 1:nrow(sessionsTable)){
+  
+# Information from data
+rowInfo <- sessionsTable[i,]
+subj <- rowInfo["subj"][1,1]
+state <- rowInfo["state"][1,1]
+session <- rowInfo["session"][1,1]
+print(paste("Subj: ",subj,", State: ",state, ", Session: ",session,sep=""))
+
+# Load files
+cuFile_t <- readMat(rowInfo["currentsFile"][1,1])
+ssFile_t <- readMat(rowInfo["ssFile"][1,1])
+
+# Take data matrix
+current_t <- cuFile_t$J
+ss_t <- ssFile_t$SS
+
+# Name
+name <- paste0("subj", subj, "_", state, "_sess", session)
+
+# Save
+current_list_t[[name]] <- t(scale(t(current_t)))
+ss_list_t[[name]] <- t(scale(t(ss_t)))
+}
+
+save(current_list_t, file = "current_list_t.RData")
+save(ss_list_t, file = "ss_list_t.RData")
+
+```
+
+### 1º analysis JxSS
+
+### Load data for full range of time:
+
+```{r}
+load("current_list_t.RData")
+load("ss_list_t.RData")
+```
+
+```{r, message=FALSE}
+# Generation of JSS matrices
+JSS_list_t <- mapply(function(a, b) a * b, current_list_t, ss_list_t, SIMPLIFY = FALSE)
+```
+
+#### Mean
+
+```{r, message=FALSE}
+# Means are obtained
+
+JSS_list_t_means = lapply(JSS_list_t, function(c){colMeans(c, na.rm = TRUE)})
+#load("JSS_list_t_means.RData")
+# Time series visualization for each patient and condition
+
+#for(i in seq_along(JSS_list_t_means)){
+ # plot(1:ncol(JSS_list_t[[i]]), JSS_list_t_means[[i]], type = "l",
+  #     col = "blue", xlab = "time", ylab = "value",
+   #    main = names(JSS_list_means)[i])
+  #Sys.sleep(1)  
+#}
+#save(JSS_list_t_means, file = "JSS_list_t_means.RData")
+```
+
+#### Standard deviation
+
+Standard deviations are computed across sources for each time point t in every matrix.:
+
+```{r, message=FALSE}
+# The standard deviation is calculated column-wise, yielding the value at each time instant along the sequence.
+
+JSS_list_t_sd <- lapply(JSS_list_t, function(m) apply(m, 2, sd, na.rm = TRUE))
+#load("JSS_list_t_sd.RData")
+# Time series visualization for each patient and condition
+
+#for(i in seq_along(JSS_list_t_sd)){
+ # plot(1:ncol(JSS_list_t[[i]]), JSS_list_t_sd[[i]], type = "l",
+  #     col = "blue", xlab = "time", ylab = "value",
+   #    main = names(JSS_list_t_sd)[i])
+  #Sys.sleep(1)  
+#}
+#save(JSS_list_t_sd, file = "JSS_list_t_sd.RData")
+```
+
+#### Time series analysis (means)
+
+We adapt the EEG data to the Python environment by generating a dictionary for further analysis. To achieve this, we must first save the variables generated in R into the Python workspace.
+
+```{python}
+# Load data means
+EEG_JSS_t_means = r.JSS_list_t_means
+
+# The keys of the dictionaries are extracted.
+samples = list(EEG_JSS_t_means.keys())
+conditions = np.array([s.split('_')[1] for s in samples])
+patients = np.unique([s.split('_')[0] for s in samples])
+measurements = list(EEG_JSS_t_means.values())
+times = [np.arange(len(m)) for m in measurements]
+dict_EEG_JSS_t_means = {"samples": samples,
+  "measurements": measurements,
+  "times": times,
+  "conditions": conditions,
+  "patients": patients}
+  
+type(dict_EEG_JSS_t_means)
+dict_EEG_JSS_t_means.keys()
+```
+
+##### Features generation
+
+```{python}
+fset_cesium_JSS_t_means = ft(times = dict_EEG_JSS_t_means["times"], values = dict_EEG_JSS_t_means["measurements"], errors = [None] * len(dict_EEG_JSS_t_means["times"]), features_to_use = features_to_use, scheduler = None)
+fset_cesium_JSS_t_means.head
+
+X = fset_cesium_JSS_t_means.values
+y = np.array(dict_EEG_JSS_t_means["conditions"])
+```
+
+##### Random Forest: The dataset is divided into training and test sets. The model is trained, and its performance is assessed.
+
+```{python}
+kf_JSS_t_means = KFold(n_splits=3, shuffle=True, random_state=20)
+model_cesium_JSS_t_means = RandomForestClassifier(n_estimators=10, random_state=20)
+accuracies_JSS_t_means = []
+
+for train_idx, test_idx in kf_JSS_t_means.split(X):
+    X_train, X_test = X[train_idx], X[test_idx]
+    y_train, y_test = y[train_idx], y[test_idx]
+
+    model_cesium_JSS_t_means.fit(X_train, y_train)
+    pred2 = model_cesium_JSS_t_means.predict(X_test)
+    accuracies_JSS_t_means.append(accuracy_score(y_test, pred2))
+
+print(f'Average accuracy k-fold CV: {np.mean(accuracies_JSS_t_means):.2f}')
+accuracies_JSS_t_means
+```
+
+##### *XGboost* classification
+
+```{python}
+# Label codification
+le_JSS_t_means = LabelEncoder()
+y_encoded = le_JSS_t_means.fit_transform(y)
+
+# K-fold Cross Validation
+kf_JSS_t_means_x = KFold(n_splits=3, shuffle=True, random_state=7)
+
+# XGboost model
+model_JSS_t_means = XGBClassifier(
+    n_estimators=8,
+    max_depth=3,
+    learning_rate=0.1,
+    subsample=0.8,
+    colsample_bytree=0.8,
+    use_label_encoder=False,
+    eval_metric='logloss',
+    random_state=7
+)
+
+# List to keep accuracies
+accuracies_JSS_t_means_x = []
+
+# Cross validation loop
+for train_idx, test_idx in kf_JSS_t_means_x.split(X):
+    X_train, X_test = X[train_idx], X[test_idx]
+    y_train, y_test = y_encoded[train_idx], y_encoded[test_idx]
+    
+    model_JSS_t_means.fit(X_train, y_train)
+    pred = model_JSS_t_means.predict(X_test)
+    accuracies_JSS_t_means_x.append(accuracy_score(y_test, pred))
+
+# Show results
+print(f'Average accuracy k-fold CV: {np.mean(accuracies_JSS_t_means_x):.2f}')
+accuracies_JSS_t_means_x
+```
+
+Features importance:
+
+```{python, eval = FALSE}
+# Data frame
+importances = model_cesium_JSS_t_means.feature_importances_
+feat_importances = pd.Series(importances, index=fset_cesium_JSS_t_means.columns)
+# Order from most to least important
+feat_importances = feat_importances.sort_values(ascending=False)
+
+# Show the most relevant
+print(feat_importances)
+
+# Bar plot
+plt.figure(figsize=(12,6))
+feat_importances.plot(kind='bar')
+plt.title('Features importance')
+plt.xticks(rotation=45)
+plt.tight_layout()
+plt.show()
+
+```
+
+##### Visualization
+
+```{python, eval = FALSE}
+fset_cesium_JSS_t_means.columns = ['_'.join(map(str, col)).strip('_') if isinstance(col, tuple) else col for col in fset_cesium_JSS_t_means.columns.values]
+fset_cesium_JSS_t_means['condition'] = conditions
+sns.pairplot(data=fset_cesium_JSS_t_means, hue="condition")
+plt.show()
+cols = fset_cesium_JSS_t_means.columns[[0, 1, 2, 3]] 
+plt.figure()
+sns.pairplot(data=fset_cesium_JSS_t_means, vars=cols,  hue="condition")
+plt.suptitle("JSS_t_mean model", fontsize=12)
+plt.show()
+```
+
+#### Time series analysis (sd)
+
+```{python}
+# Load data sd
+EEG_JSS_t_sd = r.JSS_list_t_sd
+
+# The keys of the dictionaries are extracted.
+samples = list(EEG_JSS_t_sd.keys())
+conditions = np.array([s.split('_')[1] for s in samples])
+patients = np.unique([s.split('_')[0] for s in samples])
+measurements = list(EEG_JSS_t_sd.values())
+times = [np.arange(len(m)) for m in measurements]
+dict_EEG_JSS_t_sd = {"samples": samples,
+  "measurements": measurements,
+  "times": times,
+  "conditions": conditions,
+  "patients": patients}
+  
+type(dict_EEG_JSS_t_sd)
+dict_EEG_JSS_t_sd.keys()
+```
+
+##### Features generation
+
+```{python}
+fset_cesium_JSS_t_sd = ft(times = dict_EEG_JSS_t_sd["times"], values = dict_EEG_JSS_t_sd["measurements"], errors = [None] * len(dict_EEG_JSS_t_sd["times"]), features_to_use = features_to_use, scheduler = None)
+fset_cesium_JSS_t_sd.head
+
+X = fset_cesium_JSS_t_sd.values
+y = np.array(dict_EEG_JSS_t_sd["conditions"])
+```
+
+##### Random Forest: The dataset is divided into training and test sets. The model is trained, and its performance is assessed.
+
+```{python}
+kf_JSS_t_sd = KFold(n_splits=4, shuffle=True, random_state=11)
+model_cesium_JSS_t_sd = RandomForestClassifier(n_estimators=11, random_state=18)
+accuracies_JSS_t_sd = []
+
+for train_idx, test_idx in kf_JSS_t_sd.split(X):
+    X_train, X_test = X[train_idx], X[test_idx]
+    y_train, y_test = y[train_idx], y[test_idx]
+
+    model_cesium_JSS_t_sd.fit(X_train, y_train)
+    pred2 = model_cesium_JSS_t_sd.predict(X_test)
+    accuracies_JSS_t_sd.append(accuracy_score(y_test, pred2))
+
+print(f'Average accuracy k-fold CV: {np.mean(accuracies_JSS_t_sd):.2f}')
+accuracies_JSS_t_sd
+```
+
+##### Additional evaluation metrics are computed.:
+
+```{python}
+kf_JSS_t_sd = KFold(n_splits=4, shuffle=True, random_state=11)
+model_cesium_JSS_t_sd = RandomForestClassifier(n_estimators=11, random_state=18)
+
+accuracies_JSS_t_sd = []
+recalls_JSS_t_sd = []
+f1s_JSS_t_sd = []
+roc_aucs_JSS_t_sd = []
+
+POS_LABEL = 'wake'
+
+for train_idx, test_idx in kf_JSS_t_sd.split(X):
+    X_train, X_test = X[train_idx], X[test_idx]
+    y_train, y_test = y[train_idx], y[test_idx]
+
+    model_cesium_JSS_t_sd.fit(X_train, y_train)
+    pred2 = model_cesium_JSS_t_sd.predict(X_test)
+    prob = model_cesium_JSS_t_sd.predict_proba(X_test)
+
+    accuracies_JSS_t_sd.append(accuracy_score(y_test, pred2))
+
+    y_test_binary = np.array(y_test == POS_LABEL, dtype=int)
+    pred_binary = np.array(pred2 == POS_LABEL, dtype=int)
+
+    if np.sum(y_test_binary) > 0:
+        recalls_JSS_t_sd.append(recall_score(y_test_binary, pred_binary))
+        f1s_JSS_t_sd.append(f1_score(y_test_binary, pred_binary))
+        class_index = list(model_cesium_JSS_t_sd.classes_).index(POS_LABEL)
+        roc_aucs_JSS_t_sd.append(roc_auc_score(y_test_binary, prob[:, class_index]))
+    else:
+        recalls_JSS_t_sd.append(np.nan)
+        f1s_JSS_t_sd.append(np.nan)
+        roc_aucs_JSS_t_sd.append(np.nan)
+
+# Resultados promedio
+print(f"Average accuracy k-fold CV: {np.mean(accuracies_JSS_t_sd):.2f}")
+print(f"Recall (wake vs resto): {np.nanmean(recalls_JSS_t_sd):.2f}")
+print(f"F1-score (wake vs resto): {np.nanmean(f1s_JSS_t_sd):.2f}")
+print(f"ROC-AUC (wake vs resto): {np.nanmean(roc_aucs_JSS_t_sd):.2f}")
+
+```
+
+##### ROC
+
+```{python}
+# Generate binary labels: assign 1 to 'wake' and 0 to all other conditions.
+y_test_binary = (y_test == POS_LABEL).astype(int)
+
+# 'wake' index
+class_index = list(model_cesium_JSS_t_sd.classes_).index(POS_LABEL)
+
+# Estimated probabilities for 'wake'
+y_score = prob[:, class_index]
+
+# FPR, TPR y thresholds
+fpr, tpr, thresholds = roc_curve(y_test_binary, y_score)
+roc_auc = auc(fpr, tpr)
+
+# ROC
+plt.figure(figsize=(6, 5))
+plt.plot(fpr, tpr, color='darkorange', lw=2, label=f'ROC curve (AUC = {roc_auc:.2f})')
+plt.plot([0, 1], [0, 1], color='navy', lw=1, linestyle='--')
+plt.xlabel('False Positive Rate (1 - Specificity)')
+plt.ylabel('True Positive Rate (Sensitivity)')
+plt.title(f'ROC Curve JSS_t_sd: {POS_LABEL}')
+plt.legend(loc='lower right')
+plt.grid(True)
+plt.tight_layout()
+plt.show()
+```
+
+##### *XGboost* classification
+
+```{python}
+# Label codification
+le_JSS_t_sd = LabelEncoder()
+y_encoded = le_JSS_t_sd.fit_transform(y)
+
+# K-fold Cross Validation
+kf_JSS_t_sd = KFold(n_splits=8, shuffle=True, random_state=18)
+
+# XGboost model
+model_JSS_t_sd = XGBClassifier(
+    n_estimators=20,
+    max_depth=4,
+    learning_rate=0.1,
+    subsample=0.8,
+    colsample_bytree=0.8,
+    use_label_encoder=False,
+    eval_metric='logloss',
+    random_state=10
+)
+
+# List to keep accuracies
+accuracies_JSS_t_sd_x = []
+
+# Cross validation loop
+for train_idx, test_idx in kf_JSS_t_sd.split(X):
+    X_train, X_test = X[train_idx], X[test_idx]
+    y_train, y_test = y_encoded[train_idx], y_encoded[test_idx]
+    
+    model_JSS_t_sd.fit(X_train, y_train)
+    pred = model_JSS_t_sd.predict(X_test)
+    accuracies_JSS_t_sd_x.append(accuracy_score(y_test, pred))
+
+# Show results
+print(f'Average accuracy k-fold CV: {np.mean(accuracies_JSS_t_sd_x):.2f}')
+accuracies_JSS_t_sd_x
+```
+
+Features importance:
+
+```{python, eval = FALSE}
+# Data frame
+importances = model_cesium_JSS_t_sd.feature_importances_
+feat_importances = pd.Series(importances, index=fset_cesium_JSS_t_sd.columns)
+# Order from most to least important
+feat_importances = feat_importances.sort_values(ascending=False)
+
+# Show the most relevant
+print(feat_importances)
+top4_features_JSS_t_sd = feat_importances.head(4).index.tolist()
+
+# Bar plot
+plt.figure(figsize=(12,6))
+feat_importances.plot(kind='bar')
+plt.title('Features importance')
+plt.xticks(rotation=45)
+plt.tight_layout()
+plt.show()
+
+```
+
+```{python}
+top4_features_JSS_t_sd
+```
+
+##### Visualization
+
+```{python, eval = FALSE, fig.width = 7.5, fig.height = 6.5}
+fset_cesium_JSS_t_sd.columns = ['_'.join(map(str, col)).strip('_') if isinstance(col, tuple) else col for col in fset_cesium_JSS_t_sd.columns.values]
+fset_cesium_JSS_t_sd['condition'] = conditions
+
+# Pairplot
+sns.pairplot(data=fset_cesium_JSS_t_sd, hue="condition")
+plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))  
+plt.tight_layout()  
+plt.show()
+
+# Adjust column selection
+cols = fset_cesium_JSS_t_sd.columns[[10, 7, 1, 6]] 
+plt.figure(figsize=(10, 8)) 
+sns.pairplot(data=fset_cesium_JSS_t_sd, vars=cols, hue="condition")
+plt.suptitle("JSS_t_sd model", fontsize=12)
+# Ajustes para evitar el corte de etiquetas
+plt.legend(loc='center left', bbox_to_anchor=(1.65, 0))
+plt.subplots_adjust(right=0.85, top = 0.95) 
+plt.tick_params(axis='both', which='major', labelsize=6)  Adjust size
+plt.xticks(rotation=60)  
+plt.yticks(rotation=60)  
+#plt.tight_layout()
+plt.show()
+
+
+```
+
+```{python, eval = FALSE}
+# Top 3 features 
+top3_feats_tuples = feat_importances.head(3).index.tolist()
+
+# Coding conditions as numbers
+le = LabelEncoder()
+fset_cesium_JSS_t_sd['condition_encoded'] = le.fit_transform(fset_cesium_JSS_t_sd["condition"])
+
+# Rename columns
+top3_feats_str = ['_'.join(map(str, tup)) for tup in top3_feats_tuples]
+
+# 3D plot 
+fig = px.scatter_3d(
+    fset_cesium_JSS_t_sd,
+    x=top3_feats_str[0],
+    y=top3_feats_str[1],
+    z=top3_feats_str[2],
+    color='condition',
+    color_discrete_map={
+        'wake': 'blue',
+        'sleep': 'orange',
+        'swsleep': 'green',
+        'xenon': 'pink',
+        'propofol': 'magenta'
+    },
+    title="JSS_t_sd 3D",
+    labels={
+        top3_feats_str[0]: top3_feats_tuples[0][0],
+        top3_feats_str[1]: top3_feats_tuples[1][0],
+        top3_feats_str[2]: top3_feats_tuples[2][0]
+    }
+)
+
+fig.show()
+```
+
+### 2º analysis J
+
+```{r, message=FALSE}
+# Only J matrices (previous)
+## current_list_t
+```
+
+#### Mean
+
+```{r, message=FALSE}
+# Means are obtained
+
+current_means_J_t = lapply(current_list_t, function(c){colMeans(c, na.rm = TRUE)})
+#load("current_means_J_t.RData")
+# Time series visualization for each patient and condition
+
+#for(i in seq_along(current_means_J_t)){
+ # plot(1:ncol(current_list_t[[i]]), current_means_J_t[[i]], type = "l",
+  #     col = "blue", xlab = "time", ylab = "value",
+   #    main = names(current_means_J_t)[i])
+  #Sys.sleep(1)  
+#}
+#save(current_means_J_t, file = "current_means_J_t.RData")
+```
+
+#### Standard deviation
+
+Standard deviations are computed across sources for each time point t in every matrix.:
+
+```{r, message=FALSE}
+# The standard deviation is calculated column-wise, yielding the value at each time instant along the sequence.
+
+current_J_t_sd <- lapply(current_list_t, function(m) apply(m, 2, sd, na.rm = TRUE))
+#load("current_J_t_sd.RData")
+# Time series visualization for each patient and condition
+
+#for(i in seq_along(current_J_t_sd)){
+ # plot(1:ncol(current_list_t[[i]]), current_J_t_sd[[i]], type = "l",
+  #     col = "blue", xlab = "time", ylab = "value",
+   #    main = names(current_J_t_sd)[i])
+  #Sys.sleep(1)  
+#}
+#save(current_J_t_sd, file = "current_J_t_sd.RData")
+```
+
+#### Time series analysis (means)
+
+We adapt the EEG data to the Python environment by generating a dictionary for further analysis. To achieve this, we must first save the variables generated in R into the Python workspace.
+
+```{python}
+# Load data
+EEG_J_t_means = r.current_means_J_t
+
+# The keys of the dictionaries are extracted.
+samples = list(EEG_J_t_means.keys())
+conditions = np.array([s.split('_')[1] for s in samples])
+patients = np.unique([s.split('_')[0] for s in samples])
+measurements = list(EEG_J_t_means.values())
+times = [np.arange(len(m)) for m in measurements]
+dict_EEG_J_t_means = {"samples": samples,
+  "measurements": measurements,
+  "times": times,
+  "conditions": conditions,
+  "patients": patients}
+  
+type(dict_EEG_J_t_means)
+dict_EEG_J_t_means.keys()
+```
+
+##### Features generation
+
+```{python}
+fset_cesium_J_t_means = ft(times = dict_EEG_J_t_means["times"], values = dict_EEG_J_t_means["measurements"], errors = [None] * len(dict_EEG_J_t_means["times"]), features_to_use = features_to_use, scheduler = None)
+fset_cesium_J_t_means.head
+
+X = fset_cesium_J_t_means.values
+y = np.array(dict_EEG_J_t_means["conditions"])
+```
+
+##### Random Forest: The dataset is divided into training and test sets. The model is trained, and its performance is assessed.
+
+```{python}
+kf_J_t_means = KFold(n_splits=5, shuffle=True, random_state=10)
+model_cesium_J_t_means = RandomForestClassifier(n_estimators=6, random_state=30)
+accuracies_J_t_means = []
+
+for train_idx, test_idx in kf_J_t_means.split(X):
+    X_train, X_test = X[train_idx], X[test_idx]
+    y_train, y_test = y[train_idx], y[test_idx]
+
+    model_cesium_J_t_means.fit(X_train, y_train)
+    pred2_J = model_cesium_J_t_means.predict(X_test)
+    accuracies_J_t_means.append(accuracy_score(y_test, pred2_J))
+
+print(f'Average accuracy k-fold CV: {np.mean(accuracies_J_t_means):.2f}')
+accuracies_J_t_means
+```
+
+##### *XGboost* classification
+
+```{python}
+# Label codification
+le_J_t_means = LabelEncoder()
+y_encoded_J = le_J_t_means.fit_transform(y)
+
+# K-fold Cross Validation
+kf_J_t_means_x = KFold(n_splits=14, shuffle=True, random_state=11) 
+
+# XGboost model
+model_J_t_means = XGBClassifier(
+    n_estimators=11,
+    max_depth=3,
+    learning_rate=0.1,
+    subsample=0.8,
+    colsample_bytree=0.8,
+    use_label_encoder=False,
+    eval_metric='logloss',
+    random_state=9
+)
+
+# List to keep accuracies
+accuracies_J_t_means_x = []
+
+# Cross validation loop
+for train_idx, test_idx in kf_J_t_means_x.split(X):
+    X_train, X_test = X[train_idx], X[test_idx]
+    y_train, y_test = y_encoded_J[train_idx], y_encoded_J[test_idx]
+    
+    model_J_t_means.fit(X_train, y_train)
+    pred_J = model_J_t_means.predict(X_test)
+    accuracies_J_t_means_x.append(accuracy_score(y_test, pred_J))
+
+# Show results
+print(f'Average accuracy k-fold CV: {np.mean(accuracies_J_t_means_x):.2f}')
+accuracies_J_t_means_x
+```
+
+Features importance:
+
+```{python, eval = FALSE}
+# Data frame
+importances = model_cesium_J_t_means.feature_importances_
+feat_importances = pd.Series(importances, index=fset_cesium_J_t_means.columns)
+# Order from most to least important
+feat_importances = feat_importances.sort_values(ascending=False)
+
+# Show the most relevant
+print(feat_importances)
+
+# Bar plot
+plt.figure(figsize=(12,6))
+feat_importances.plot(kind='bar')
+plt.title('Features importance')
+plt.xticks(rotation=45)
+plt.tight_layout()
+plt.show()
+
+```
+
+##### Visualization
+
+```{python, eval = FALSE}
+fset_cesium_J_t_means.columns = ['_'.join(map(str, col)).strip('_') if isinstance(col, tuple) else col for col in fset_cesium_J_t_means.columns.values]
+fset_cesium_J_t_means['condition'] = conditions
+sns.pairplot(data=fset_cesium_J_t_means, hue="condition")
+plt.show()
+cols = fset_cesium_J_t_means.columns[[0, 1, 2, 3]] 
+plt.figure()
+sns.pairplot(data=fset_cesium_J_t_means, vars=cols,  hue="condition")
+plt.suptitle("J_t_mean model", fontsize=12)
+plt.subplots_adjust(right=0.85, top = 0.95) 
+plt.show()
+```
+
+#### Time series analysis (sd)
+
+```{python}
+# Load data sd
+EEG_J_t_sd = r.current_J_t_sd
+
+# The keys of the dictionaries are extracted.
+samples = list(EEG_J_t_sd.keys())
+conditions = np.array([s.split('_')[1] for s in samples])
+patients = np.unique([s.split('_')[0] for s in samples])
+measurements = list(EEG_J_t_sd.values())
+times = [np.arange(len(m)) for m in measurements]
+dict_EEG_J_t_sd = {"samples": samples,
+  "measurements": measurements,
+  "times": times,
+  "conditions": conditions,
+  "patients": patients}
+  
+type(dict_EEG_J_t_sd)
+dict_EEG_J_t_sd.keys()
+```
+
+##### Features generation
+
+```{python}
+fset_cesium_J_t_sd = ft(times = dict_EEG_J_t_sd["times"], values = dict_EEG_J_t_sd["measurements"], errors = [None] * len(dict_EEG_J_t_sd["times"]), features_to_use = features_to_use, scheduler = None)
+fset_cesium_J_t_sd.head
+
+X = fset_cesium_J_t_sd.values
+y = np.array(dict_EEG_J_t_sd["conditions"])
+```
+
+##### Random Forest: The dataset is divided into training and test sets. The model is trained, and its performance is assessed.
+
+```{python}
+kf_J_t_sd = KFold(n_splits=14, shuffle=True, random_state=18)
+model_cesium_J_t_sd = RandomForestClassifier(n_estimators=10, random_state=10)
+accuracies_J_t_sd = []
+
+for train_idx, test_idx in kf_J_t_sd.split(X):
+    X_train, X_test = X[train_idx], X[test_idx]
+    y_train, y_test = y[train_idx], y[test_idx]
+
+    model_cesium_J_t_sd.fit(X_train, y_train)
+    pred2 = model_cesium_J_t_sd.predict(X_test)
+    accuracies_J_t_sd.append(accuracy_score(y_test, pred2))
+
+print(f'Average accuracy k-fold CV: {np.mean(accuracies_J_t_sd):.2f}')
+accuracies_J_t_sd
+```
+
+##### *XGboost* classification
+
+```{python}
+# Label codification
+le_J_t_sd = LabelEncoder()
+y_encoded = le_J_t_sd.fit_transform(y)
+
+# K-fold Cross Validation
+kf_J_t_sd_x = KFold(n_splits=8, shuffle=True, random_state=11)
+
+# XGboost model
+model_J_t_sd = XGBClassifier(
+    n_estimators=8,
+    max_depth=0,
+    learning_rate=0.1,
+    subsample=0.8,
+    colsample_bytree=0.8,
+    use_label_encoder=False,
+    eval_metric='logloss',
+    random_state=7
+)
+
+# List to keep accuracies
+accuracies_J_t_sd_x = []
+
+# Cross validation loop
+for train_idx, test_idx in kf_J_t_sd_x.split(X):
+    X_train, X_test = X[train_idx], X[test_idx]
+    y_train, y_test = y_encoded[train_idx], y_encoded[test_idx]
+    
+    model_J_t_sd.fit(X_train, y_train)
+    pred = model_J_t_sd.predict(X_test)
+    accuracies_J_t_sd_x.append(accuracy_score(y_test, pred))
+
+# Show results
+print(f'Average accuracy k-fold CV: {np.mean(accuracies_J_t_sd_x):.2f}')
+accuracies_J_t_sd_x
+```
+
+Features importance:
+
+```{python, eval = FALSE}
+# Data frame
+importances = model_cesium_J_t_sd.feature_importances_
+feat_importances = pd.Series(importances, index=fset_cesium_J_t_sd.columns)
+# Order from most to least important
+feat_importances = feat_importances.sort_values(ascending=False)
+
+# Show the most relevant
+print(feat_importances)
+
+# Bar plot
+plt.figure(figsize=(12,6))
+feat_importances.plot(kind='bar')
+plt.title('Features importance')
+plt.xticks(rotation=45)
+plt.tight_layout()
+plt.show()
+
+```
+
+##### Visualization
+
+```{python, eval = FALSE}
+fset_cesium_J_t_sd.columns = ['_'.join(map(str, col)).strip('_') if isinstance(col, tuple) else col for col in fset_cesium_J_t_sd.columns.values]
+fset_cesium_J_t_sd['condition'] = conditions
+sns.pairplot(data=fset_cesium_J_t_sd, hue="condition")
+plt.show()
+cols = fset_cesium_J_t_sd.columns[[0, 1, 2, 3]] 
+plt.figure()
+sns.pairplot(data=fset_cesium_J_t_sd, vars=cols,  hue="condition")
+plt.suptitle("J_t_sd model", fontsize=12)
+plt.subplots_adjust(right=0.85, top = 0.95) 
+plt.show()
+```
+
+### 3º analysis SS
+
+```{r, message=FALSE}
+# Only SS matrices (previous)
+## ss_list
+```
+
+#### Mean
+
+```{r, message=FALSE}
+# Means are obtained
+
+ss_t_means = lapply(ss_list_t, function(c){colMeans(c, na.rm = TRUE)})
+#load("ss_t_means.RData")
+# Time series visualization for each patient and condition
+
+#for(i in seq_along(ss_t_means)){
+ # plot(1:ncol(ss_list_t[[i]]), ss_t_means[[i]], type = "l",
+  #     col = "blue", xlab = "time", ylab = "value",
+   #    main = names(ss_t_means)[i])
+  #Sys.sleep(1)  
+#}
+#save(ss_t_means, file = "ss_t_means.RData")
+```
+
+#### Standard deviation
+
+Standard deviations are computed across sources for each time point t in every matrix.:
+
+```{r, message=FALSE}
+# The standard deviation is calculated column-wise, yielding the value at each time instant along the sequence.
+
+ss_t_sd <- lapply(ss_list_t, function(m) apply(m, 2, sd, na.rm = TRUE))
+#load("ss_t_sd.RData")
+# Time series visualization for each patient and condition
+
+#for(i in seq_along(ss_t_sd)){
+ # plot(1:ncol(ss_list_t[[i]]), ss_t_sd[[i]], type = "l",
+  #     col = "blue", xlab = "time", ylab = "value",
+   #    main = names(ss_t_sd)[i])
+  #Sys.sleep(1)  
+#}
+#save(ss_t_sd, file = "ss_t_sd.RData")
+```
+
+#### Time series analysis (means)
+
+We adapt the EEG data to the Python environment by generating a dictionary for further analysis. To achieve this, we must first save the variables generated in R into the Python workspace.
+
+```{python}
+# Load data
+EEG_SS_t_means = r.ss_t_means
+
+# The keys of the dictionaries are extracted.
+samples = list(EEG_SS_t_means.keys())
+conditions = np.array([s.split('_')[1] for s in samples])
+patients = np.unique([s.split('_')[0] for s in samples])
+measurements = list(EEG_SS_t_means.values())
+times = [np.arange(len(m)) for m in measurements]
+dict_EEG_SS_t_means = {"samples": samples,
+  "measurements": measurements,
+  "times": times,
+  "conditions": conditions,
+  "patients": patients}
+  
+type(dict_EEG_SS_t_means)
+dict_EEG_SS_t_means.keys()
+```
+
+##### Features generation
+
+```{python}
+fset_cesium_SS_t_means = ft(times = dict_EEG_SS_t_means["times"], values = dict_EEG_SS_t_means["measurements"], errors = [None] * len(dict_EEG_SS_t_means["times"]), features_to_use = features_to_use, scheduler = None)
+fset_cesium_SS_t_means.head
+
+X = fset_cesium_SS_t_means.values
+y = np.array(dict_EEG_SS_t_means["conditions"])
+```
+
+##### Random Forest: The dataset is divided into training and test sets. The model is trained, and its performance is assessed.
+
+```{python}
+kf_SS_t_means = KFold(n_splits=3, shuffle=True, random_state=10)
+model_cesium_SS_t_means = RandomForestClassifier(n_estimators=8, random_state=8)
+accuracies_SS_t_means = []
+
+for train_idx, test_idx in kf_SS_t_means.split(X):
+    X_train, X_test = X[train_idx], X[test_idx]
+    y_train, y_test = y[train_idx], y[test_idx]
+
+    model_cesium_SS_t_means.fit(X_train, y_train)
+    pred2_SS = model_cesium_SS_t_means.predict(X_test)
+    accuracies_SS_t_means.append(accuracy_score(y_test, pred2_SS))
+
+print(f'Average accuracy k-fold CV: {np.mean(accuracies_SS_t_means):.2f}')
+accuracies_SS_t_means
+```
+
+##### *XGboost* classification
+
+```{python}
+# Label codification
+le_SS_t_means = LabelEncoder()
+y_encoded_SS = le_SS_t_means.fit_transform(y)
+
+# K-fold Cross Validation
+kf_SS_t_means_x = KFold(n_splits=7, shuffle=True, random_state=9)
+
+# XGboost model
+model_SS_t_means = XGBClassifier(
+    n_estimators=10,
+    max_depth=4,
+    learning_rate=0.1,
+    subsample=0.8,
+    colsample_bytree=0.8,
+    use_label_encoder=False,
+    eval_metric='logloss',
+    random_state=10
+)
+
+# List to keep accuracies
+accuracies_SS_t_means_x = []
+
+# Cross validation loop
+for train_idx, test_idx in kf_SS_t_means_x.split(X):
+    X_train, X_test = X[train_idx], X[test_idx]
+    y_train, y_test = y_encoded_SS[train_idx], y_encoded_SS[test_idx]
+    
+    model_SS_t_means.fit(X_train, y_train)
+    pred_SS = model_SS_t_means.predict(X_test)
+    accuracies_SS_t_means_x.append(accuracy_score(y_test, pred_SS))
+
+# Show results
+print(f'Average accuracy k-fold CV: {np.mean(accuracies_SS_t_means_x):.2f}')
+accuracies_SS_t_means_x
+```
+
+Features importance:
+
+```{python, eval = FALSE}
+# Data frame
+importances = model_cesium_SS_t_means.feature_importances_
+feat_importances = pd.Series(importances, index=fset_cesium_SS_t_means.columns)
+# Order from most to least important
+feat_importances = feat_importances.sort_values(ascending=False)
+
+# Show the most relevant
+print(feat_importances)
+
+# Bar plot
+plt.figure(figsize=(12,6))
+feat_importances.plot(kind='bar')
+plt.title('Features importance')
+plt.xticks(rotation=45)
+plt.tight_layout()
+plt.show()
+
+```
+
+##### Visualization
+
+```{python, eval = FALSE}
+fset_cesium_SS_t_means.columns = ['_'.join(map(str, col)).strip('_') if isinstance(col, tuple) else col for col in fset_cesium_SS_t_means.columns.values]
+fset_cesium_SS_t_means['condition'] = conditions
+sns.pairplot(data=fset_cesium_SS_t_means, hue="condition")
+plt.show()
+cols = fset_cesium_SS_t_means.columns[[0, 1, 2, 3]] 
+plt.figure()
+sns.pairplot(data=fset_cesium_SS_t_means, vars=cols,  hue="condition")
+plt.suptitle("SS_t_mean model", fontsize=12)
+plt.show()
+```
+
+#### Time series analysis (sd)
+
+```{python}
+# Load data sd
+EEG_SS_t_sd = r.ss_t_sd
+
+# The keys of the dictionaries are extracted.
+samples = list(EEG_SS_t_sd.keys())
+conditions = np.array([s.split('_')[1] for s in samples])
+patients = np.unique([s.split('_')[0] for s in samples])
+measurements = list(EEG_SS_t_sd.values())
+times = [np.arange(len(m)) for m in measurements]
+dict_EEG_SS_t_sd = {"samples": samples,
+  "measurements": measurements,
+  "times": times,
+  "conditions": conditions,
+  "patients": patients}
+  
+type(dict_EEG_SS_t_sd)
+dict_EEG_SS_t_sd.keys()
+```
+
+##### Features generation
+
+```{python}
+fset_cesium_SS_t_sd = ft(times = dict_EEG_SS_t_sd["times"], values = dict_EEG_SS_t_sd["measurements"], errors = [None] * len(dict_EEG_SS_t_sd["times"]), features_to_use = features_to_use, scheduler = None)
+fset_cesium_SS_t_sd.head
+
+X = fset_cesium_SS_t_sd.values
+y = np.array(dict_EEG_SS_t_sd["conditions"])
+```
+
+##### Random Forest: The dataset is divided into training and test sets. The model is trained, and its performance is assessed.
+
+```{python}
+kf_SS_t_sd = KFold(n_splits=3, shuffle=True, random_state=20)
+model_cesium_SS_t_sd = RandomForestClassifier(n_estimators=8, random_state=18)
+accuracies_SS_t_sd = []
+
+for train_idx, test_idx in kf_SS_t_sd.split(X):
+    X_train, X_test = X[train_idx], X[test_idx]
+    y_train, y_test = y[train_idx], y[test_idx]
+
+    model_cesium_SS_t_sd.fit(X_train, y_train)
+    pred2 = model_cesium_SS_t_sd.predict(X_test)
+    accuracies_SS_t_sd.append(accuracy_score(y_test, pred2))
+
+print(f'Average accuracy k-fold CV: {np.mean(accuracies_SS_t_sd):.2f}')
+accuracies_SS_t_sd
+```
+
+##### Additional evaluation metrics are computed.:
+
+```{python}
+kf_SS_t_sd = KFold(n_splits=3, shuffle=True, random_state=20)
+model_cesium_SS_t_sd = RandomForestClassifier(n_estimators=8, random_state=18)
+
+accuracies_SS_t_sd = []
+recalls_SS_t_sd = []
+f1s_SS_t_sd = []
+roc_aucs_SS_t_sd = []
+
+POS_LABEL = 'wake'
+
+for train_idx, test_idx in kf_SS_t_sd.split(X):
+    X_train, X_test = X[train_idx], X[test_idx]
+    y_train, y_test = y[train_idx], y[test_idx]
+
+    model_cesium_SS_t_sd.fit(X_train, y_train)
+    pred2 = model_cesium_SS_t_sd.predict(X_test)
+    prob = model_cesium_SS_t_sd.predict_proba(X_test)
+
+    accuracies_SS_t_sd.append(accuracy_score(y_test, pred2))
+
+    y_test_binary = np.array(y_test == POS_LABEL, dtype=int)
+    pred_binary = np.array(pred2 == POS_LABEL, dtype=int)
+
+    if np.sum(y_test_binary) > 0:
+        recalls_SS_t_sd.append(recall_score(y_test_binary, pred_binary))
+        f1s_SS_t_sd.append(f1_score(y_test_binary, pred_binary))
+        class_index = list(model_cesium_SS_t_sd.classes_).index(POS_LABEL)
+        roc_aucs_SS_t_sd.append(roc_auc_score(y_test_binary, prob[:, class_index]))
+    else:
+        recalls_SS_t_sd.append(np.nan)
+        f1s_SS_t_sd.append(np.nan)
+        roc_aucs_SS_t_sd.append(np.nan)
+
+# Resultados promedio
+print(f"Average accuracy k-fold CV: {np.mean(accuracies_SS_t_sd):.2f}")
+print(f"Recall (wake vs resto): {np.nanmean(recalls_SS_t_sd):.2f}")
+print(f"F1-score (wake vs resto): {np.nanmean(f1s_SS_t_sd):.2f}")
+print(f"ROC-AUC (wake vs resto): {np.nanmean(roc_aucs_SS_t_sd):.2f}")
+
+```
+
+##### ROC
+
+```{python}
+# Generate binary labels: assign 1 to 'wake' and 0 to all other conditions.
+y_test_binary = (y_test == POS_LABEL).astype(int)
+
+# 'wake' index
+class_index = list(model_cesium_JSS_t_sd.classes_).index(POS_LABEL)
+
+# Estimated probabilities for 'wake'
+y_score = prob[:, class_index]
+
+# FPR, TPR y thresholds
+fpr, tpr, thresholds = roc_curve(y_test_binary, y_score)
+roc_auc = auc(fpr, tpr)
+
+# ROC
+plt.figure(figsize=(6, 5))
+plt.plot(fpr, tpr, color='darkorange', lw=2, label=f'ROC curve (AUC = {roc_auc:.2f})')
+plt.plot([0, 1], [0, 1], color='navy', lw=1, linestyle='--')
+plt.xlabel('False Positive Rate (1 - Specificity)')
+plt.ylabel('True Positive Rate (Sensitivity)')
+plt.title(f'ROC Curve for class: {POS_LABEL}')
+plt.legend(loc='lower right')
+plt.grid(True)
+plt.tight_layout()
+plt.show()
+```
+
+##### *XGboost* classification
+
+```{python}
+# Label codification
+le_SS_t_sd = LabelEncoder()
+y_encoded = le_SS_t_sd.fit_transform(y)
+
+# K-fold Cross Validation
+kf_SS_t_sd_x = KFold(n_splits=3, shuffle=True, random_state=13)
+
+# XGboost model
+model_SS_t_sd = XGBClassifier(
+    n_estimators=20,
+    max_depth=4,
+    learning_rate=0.1,
+    subsample=0.8,
+    colsample_bytree=0.8,
+    use_label_encoder=False,
+    eval_metric='logloss',
+    random_state=18
+)
+
+# List to keep accuracies
+accuracies_SS_t_sd_x = []
+
+# Cross validation loop
+for train_idx, test_idx in kf_SS_t_sd_x.split(X):
+    X_train, X_test = X[train_idx], X[test_idx]
+    y_train, y_test = y_encoded[train_idx], y_encoded[test_idx]
+    
+    model_SS_t_sd.fit(X_train, y_train)
+    pred = model_SS_t_sd.predict(X_test)
+    accuracies_SS_t_sd_x.append(accuracy_score(y_test, pred))
+
+# Show results
+print(f'Average accuracy k-fold CV: {np.mean(accuracies_SS_t_sd_x):.2f}')
+accuracies_SS_t_sd_x
+```
+
+Features importance:
+
+```{python, eval = FALSE}
+# Data frame
+importances = model_cesium_SS_t_sd.feature_importances_
+feat_importances = pd.Series(importances, index=fset_cesium_SS_t_sd.columns)
+# Order from most to least important
+feat_importances = feat_importances.sort_values(ascending=False)
+
+# Show the most relevant
+print(feat_importances)
+top4_features_SS_t_sd = feat_importances.head(4).index.tolist()
+# Bar plot
+plt.figure(figsize=(12,6))
+feat_importances.plot(kind='bar')
+plt.title('Features importance')
+plt.xticks(rotation=45)
+plt.tight_layout()
+plt.show()
+
+```
+
+```{python}
+top4_features_SS_t_sd
+```
+
+##### Visualization
+
+```{python, eval = FALSE}
+fset_cesium_SS_t_sd.columns = ['_'.join(map(str, col)).strip('_') if isinstance(col, tuple) else col for col in fset_cesium_SS_t_sd.columns.values]
+fset_cesium_SS_t_sd['condition'] = conditions
+
+# Pairplot
+sns.pairplot(data=fset_cesium_SS_t_sd, hue="condition")
+plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))  
+plt.tight_layout()  
+plt.show()
+
+# Adjust column selection
+cols = fset_cesium_SS_t_sd.columns[[10, 8, 7, 4]] 
+plt.figure(figsize=(50, 10)) 
+sns.pairplot(data=fset_cesium_SS_t_sd, vars=cols, hue="condition")
+plt.suptitle("SS_t_sd model", fontsize=12)
+# Ajustes para evitar el corte de etiquetas
+plt.legend(loc='center left', bbox_to_anchor=(1.65, 0))
+plt.subplots_adjust(right=0.85, top = 0.95) 
+plt.tick_params(axis='both', which='major', labelsize=6)  Adjust size
+plt.xticks(rotation=90)  
+plt.yticks(rotation=90)  
+#plt.tight_layout()
+plt.show()
+```
+
+```{python, eval = FALSE}
+# Top 3 features 
+top3_feats_tuples = feat_importances.head(3).index.tolist()
+
+# Coding conditions as numbers
+le = LabelEncoder()
+fset_cesium_SS_t_sd['condition_encoded'] = le.fit_transform(fset_cesium_SS_t_sd["condition"])
+
+# Rename columns
+top3_feats_str = ['_'.join(map(str, tup)) for tup in top3_feats_tuples]
+
+# 3D plot 
+fig = px.scatter_3d(
+    fset_cesium_SS_t_sd,
+    x=top3_feats_str[0],
+    y=top3_feats_str[1],
+    z=top3_feats_str[2],
+    color='condition',
+    color_discrete_map={
+        'wake': 'blue',
+        'sleep': 'orange',
+        'swsleep': 'green',
+        'xenon': 'pink',
+        'propofol': 'magenta'
+    },
+    title="3D distribution by conditions",
+    labels={
+        top3_feats_str[0]: top3_feats_tuples[0][0],
+        top3_feats_str[1]: top3_feats_tuples[1][0],
+        top3_feats_str[2]: top3_feats_tuples[2][0]
+    }
+)
+
+fig.show()
+```
+
+## Summary of accuracies
+
+```{python}
+for name in globals():
+    if name.startswith("accuracies"):
+        print(f"{name} = {globals()[name]}")
+```
+
+
+```{python}
+# Means of 'accuracies' variables
+datos = []
+for name in globals():
+    if name.startswith("accuracies"):
+        values = globals()[name]
+        if isinstance(values, list) and len(values) > 0:
+            mean = np.mean(values)
+            datos.append((name.replace("accuracies_", ""), mean))
+
+# Crear DataFrame
+df = pd.DataFrame(datos, columns=["Measure", "Accuracy mean"])
+df = df.sort_values(by="Accuracy mean", ascending=False)
+
+# Plot
+plt.figure()
+bars = plt.bar(df["Measure"], df["Accuracy mean"], color='skyblue')
+plt.xticks(rotation=45, ha='right')
+plt.ylabel("Accuracy mean")
+plt.title("Average accuracy by model")
+plt.ylim(0, 1.05)
+
+for bar in bars:
+    yval = bar.get_height()
+    plt.text(bar.get_x() + bar.get_width()/2, yval + 0.01, f"{yval:.2f}", ha='center', fontsize=8)
+
+plt.tight_layout()
+plt.show()
+```
