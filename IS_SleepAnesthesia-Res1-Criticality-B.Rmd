@@ -6,10 +6,6 @@ editor_options:
 
 # Analysis of PCI wake/sleep/anesthesia subjects by using Information Structures
 
-Estas son las pruebas que hice hace ya algunos meses. He organizado un
-poco el código, pero la próxima semana lo comentamos, porque algunas
-cosas están un poco mezcladas.
-
 ## Setting parameters
 
 El parámetro "nClusters" es el número de clústers en que van a agruparse
